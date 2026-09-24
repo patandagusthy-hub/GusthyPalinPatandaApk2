@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+/* High-Contrast Light Mode Accessibility Rules */
+html.light {
+  color-scheme: light;
+}
+
+html.light body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* Light mode background surface overrides */
+html.light .bg-slate-950 {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-slate-900\/90,
+html.light .bg-slate-900\/80 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .bg-slate-800\/90,
+html.light .bg-slate-800\/80,
+html.light .bg-slate-800\/60,
+html.light .bg-slate-800\/50,
+html.light .bg-slate-800\/40 {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .bg-slate-700 {
+  background-color: #e2e8f0 !important;
+}
+
+/* Modal and overlay backdrops in light mode */
+html.light .bg-slate-950\/80,
+html.light .bg-slate-950\/90,
+html.light .bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.6) !important;
+}
+
+/* High-Contrast Typography */
+html.light .text-white:not(.keep-white):not([class*="bg-blue-"]):not([class*="bg-emerald-"]):not([class*="bg-indigo-"]):not([class*="bg-rose-"]):not([class*="bg-red-"]):not([class*="bg-amber-600"]) {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-100 {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-200 {
+  color: #1e293b !important;
+}
+
+html.light .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.light .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.light .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Border Contrasts */
+html.light .border-slate-800 {
+  border-color: #cbd5e1 !important;
+}
+
+html.light .border-slate-700 {
+  border-color: #94a3b8 !important;
+}
+
+html.light .border-slate-600 {
+  border-color: #64748b !important;
+}
+
+/* Form inputs & textareas for exam high contrast */
+html.light input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+html.light textarea,
+html.light select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #64748b !important;
+}
+
+html.light input:focus,
+html.light textarea:focus,
+html.light select:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+}
+
+/* Brand & Header text adjustments for light mode */
+html.light .bg-gradient-to-r.from-white {
+  background-image: linear-gradient(to right, #0f172a, #1e3a8a, #0369a1) !important;
+}
+
+/* Active MCQ option enhancement in light mode */
+html.light .border-blue-500 {
+  border-color: #2563eb !important;
+}
+
+html.light .bg-blue-600\/20,
+html.light .bg-blue-600\/15 {
+  background-color: #eff6ff !important;
+}
+
+html.light .text-blue-300 {
+  color: #1d4ed8 !important;
+}
+
+html.light .text-blue-400 {
+  color: #2563eb !important;
+}
+
+/* Badges and pills in light mode */
+html.light .bg-emerald-500\/20 {
+  background-color: #dcfce7 !important;
+}
+html.light .text-emerald-400 {
+  color: #15803d !important;
+}
+html.light .border-emerald-500\/30 {
+  border-color: #86efac !important;
+}
+
+html.light .bg-amber-500\/15,
+html.light .bg-amber-500\/20 {
+  background-color: #fef3c7 !important;
+}
+html.light .text-amber-300,
+html.light .text-amber-400 {
+  color: #b45309 !important;
+}
+
+html.light .bg-rose-950\/80,
+html.light .bg-rose-950\/60 {
+  background-color: #ffe4e6 !important;
+}
+html.light .text-rose-300,
+html.light .text-rose-400 {
+  color: #be123c !important;
+}
+html.light .border-rose-500,
+html.light .border-rose-500\/80 {
+  border-color: #f43f5e !important;
+}
+
+/* High contrast card elevation */
+html.light .shadow-xl,
+html.light .shadow-2xl {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Examination accessibility focus indicator */
+html.light :focus-visible {
+  outline: 2px solid #2563eb !important;
+  outline-offset: 2px !important;
+}
+
+/* Print Styles for Student Exam Cards (Kertas A4 Siap Cetak) */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide navigation, buttons, and chrome during print */
+  nav,
+  header,
+  button,
+  input,
+  select,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Allow modal content and posters to print without fixed positioning constraints */
+  .fixed {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+  }
+
+  /* Card container layout for print */
+  .student-exam-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    border: 1.5px solid #0f172a !important;
+    box-shadow: none !important;
+    margin-bottom: 12px !important;
+  }
+
+  .student-exam-card * {
+    color: #0f172a !important;
+  }
+
+  .student-exam-card img {
+    max-width: 140px !important;
+    max-height: 140px !important;
+  }
+}
+

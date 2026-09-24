@@ -1,0 +1,10 @@
+{
+  "name": "GusthyPalinPatandaExam",
+  "description": "Aplikasi Ujian Online Aman dengan Anti-Kecurangan Tingkat Tinggi, AI Proctoring Webcam, Live Duck Race Scoreboard, Barcode Login, dan Penilaian Otomatis.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
