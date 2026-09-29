@@ -10,6 +10,7 @@ import {
   BackupFileInfo,
   isSampleStudent,
   isExamClassActive,
+  isQuestionForStudent,
 } from "../types";
 import {
   INITIAL_STUDENTS,
@@ -1062,14 +1063,17 @@ export function useExamStore() {
       const currentStudent = currentUser as Student;
       setIsGrading(true);
 
-      // Automated evaluation
+      // Automated evaluation (only for questions applicable to the student's grade level)
       let mcqTotal = 0;
       let mcqMax = 0;
       let essayTotal = 0;
       let essayMax = 0;
       const essayEvaluations: Record<string, any> = {};
 
-      questions.forEach((q) => {
+      const studentQuestions = questions.filter((q) => isQuestionForStudent(q, currentStudent.className));
+      const activeQuestions = studentQuestions.length > 0 ? studentQuestions : questions;
+
+      activeQuestions.forEach((q) => {
         const studentAns = studentAnswers[q.id];
 
         if (q.type === "mcq") {

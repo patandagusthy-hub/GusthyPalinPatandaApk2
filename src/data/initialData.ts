@@ -7120,6 +7120,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-1",
     type: "mcq",
+    tingkatKelas: "Semua Kelas",
     question: "Protokol keamanan web apa yang mengenkripsi transmisi data antara browser pengguna dan server web menggunakan SSL/TLS?",
     options: ["HTTP", "FTP", "HTTPS", "SMTP"],
     correctAnswer: 2,
@@ -7130,6 +7131,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-2",
     type: "mcq",
+    tingkatKelas: "Semua Kelas",
     question: "Manakah teknik yang paling efektif untuk mencegah serangan SQL Injection pada aplikasi modern?",
     options: [
       "Menggunakan Prepared Statements / Parameterized Queries",
@@ -7145,6 +7147,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-3",
     type: "mcq",
+    tingkatKelas: "X",
     question: "Dalam model arsitektur RESTful API, status kode HTTP '401 Unauthorized' memiliki arti:",
     options: [
       "Halaman server mengalami error internal",
@@ -7160,6 +7163,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-4",
     type: "mcq",
+    tingkatKelas: "X",
     question: "Algoritma sorting manakah yang memiliki kompleksitas waktu rata-rata O(n log n)?",
     options: ["Bubble Sort", "Quick Sort", "Insertion Sort", "Selection Sort"],
     correctAnswer: 1,
@@ -7170,6 +7174,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-5",
     type: "mcq",
+    tingkatKelas: "XI",
     question: "Apa fungsi utama dari prinsip 'Zero Trust Architecture' dalam sistem keamanan siber?",
     options: [
       "Mempercayai semua perangkat di dalam jaringan lokal (LAN)",
@@ -7185,6 +7190,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-6",
     type: "mcq",
+    tingkatKelas: "XI",
     question: "Komponen manakah dalam sistem operasi yang bertindak sebagai jembatan utama antara perangkat lunak (software) dan perangkat keras (hardware)?",
     options: ["Kernel", "GUI Desktop", "Compiler", "File Explorer"],
     correctAnswer: 0,
@@ -7195,6 +7201,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-7",
     type: "essay",
+    tingkatKelas: "XII",
     question: "Jelaskan konsep Two-Factor Authentication (2FA) / Multi-Factor Authentication (MFA), mengapa metode ini jauh lebih aman dibandingkan hanya mengandalkan kata sandi (password), serta sebutkan minimal 2 contoh faktor yang digunakan!",
     keyAnswer: "2FA/MFA adalah lapisan keamanan tambahan yang mewajibkan pengguna memberikan dua atau lebih bukti verifikasi sebelum diberi akses. Lebih aman karena jika password bocor, akun tetap terlindungi tanpa faktor kedua. Contoh faktor: Something you know (password/PIN), Something you have (OTP via SMS/Authenticator App, Hardware Key), Something you are (biometrik sidik jari, pengenalan wajah).",
     points: 20,
@@ -7203,6 +7210,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-8",
     type: "essay",
+    tingkatKelas: "XII",
     question: "Uraikan bagaimana teknologi AI (Artificial Intelligence) dapat dimanfaatkan untuk mendeteksi kecurangan dalam sistem ujian online (Online Exam Proctoring), serta berikan solusi untuk menjaga kenyamanan dan privasi siswa!",
     keyAnswer: "AI proctoring dapat memproses video webcam secara real-time untuk mendeteksi wajah (apakah siswa hadir, menoleh, atau terdapat orang lain), mendeteksi objek terlarang (seperti smartphone), dan menganalisis perilaku mencurigakan. Untuk menjaga privasi: data video tidak disebarkan keluar, diproses secara aman, siswa diberitahu secara transparan, dan keputusan akhir tetap dapat dikonfirmasi oleh pengawas manusia.",
     points: 20,
@@ -7211,6 +7219,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-9",
     type: "true_false",
+    tingkatKelas: "X",
     question: "Dalam teori komputasi dan matematika diskrit, bilangan prima terkecil yang merupakan bilangan genap adalah 2.",
     correctBool: true,
     keyAnswer: "Benar",
@@ -7221,6 +7230,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-10",
     type: "matching",
+    tingkatKelas: "XI",
     question: "Pasangkan istilah arsitektur jaringan komputer di kolom kiri dengan fungsi utamanya di kolom kanan secara tepat:",
     matchingPairs: [
       { left: "DNS (Domain Name System)", right: "Menerjemahkan nama domain web menjadi alamat IP numerik" },
@@ -7234,6 +7244,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-11",
     type: "mcq",
+    tingkatKelas: "X",
     question: "Hitung nilai akar dari persamaan kuadrat berikut: $x^2 - 7x + 10 = 0$ menggunakan rumus diskriminan $D = b^2 - 4ac$:",
     options: [
       "$x = 2$ atau $x = 5$",
@@ -7249,6 +7260,7 @@ export const INITIAL_QUESTIONS: Question[] = [
   {
     id: "q-12",
     type: "mcq",
+    tingkatKelas: "XII",
     question: "Dengarkan audio percakapan pendek berikut dengan saksama:",
     mediaType: "audio",
     mediaUrl: "https://actions.google.com/sounds/v1/speech/announcement_chime.ogg",

@@ -53,7 +53,7 @@ import {
   Radio,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { Student, Question, ExamConfig, TeacherOrAdmin, isSampleStudent, isExamClassActive } from "../types";
+import { Student, Question, ExamConfig, TeacherOrAdmin, isSampleStudent, isExamClassActive, TingkatKelas, getTingkatBadgeConfig } from "../types";
 import { exportResultsToExcel, exportResultsToPDF } from "../utils/exportUtils";
 import { DuckRaceLive } from "./DuckRaceLive";
 import { generateQRCode, generateUniqueStudentToken, auditStudentTokens, ensureUniqueStudentTokens } from "../utils/barcodeUtils";
@@ -260,6 +260,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // AI Question Generator state
   const [showAiGenModal, setShowAiGenModal] = useState(false);
   const [aiTopic, setAiTopic] = useState("Keamanan Siber & Jaringan Komputer");
+  const [aiTargetKelas, setAiTargetKelas] = useState<TingkatKelas>("Semua Kelas");
   const [aiCount, setAiCount] = useState(3);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiGenMessage, setAiGenMessage] = useState<string | null>(null);
@@ -520,7 +521,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [showRevisionModal, setShowRevisionModal] = useState<boolean>(false);
   const [selectedRevisionQuestion, setSelectedRevisionQuestion] = useState<Question | null>(null);
+  const [questionGradeFilter, setQuestionGradeFilter] = useState<"Semua" | "X" | "XI" | "XII">("Semua");
   const excelQuestionFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Filtered questions based on selected grade filter tab
+  const filteredBankQuestions = useMemo(() => {
+    if (questionGradeFilter === "Semua") return questions;
+    return questions.filter((q) => {
+      const tingkat = q.tingkatKelas || "Semua Kelas";
+      return tingkat === questionGradeFilter;
+    });
+  }, [questions, questionGradeFilter]);
+
+  const questionCountsByGrade = useMemo(() => {
+    return {
+      semua: questions.length,
+      x: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "X").length,
+      xi: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XI").length,
+      xii: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XII").length,
+      universal: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "Semua Kelas").length,
+    };
+  }, [questions]);
 
   const handleExcelQuestionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -902,7 +923,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: aiTopic,
-          gradeLevel: config.gradeLevel,
+          gradeLevel: aiTargetKelas === "Semua Kelas" ? config.gradeLevel : `Kelas ${aiTargetKelas}`,
           count: aiCount,
         }),
       });
@@ -914,6 +935,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             onAddQuestion({
               type: q.type === "essay" ? "essay" : "mcq",
               question: q.question,
+              tingkatKelas: aiTargetKelas,
               options: q.options || ["Pilihan A", "Pilihan B", "Pilihan C", "Pilihan D"],
               correctAnswer: q.correctAnswer ?? 0,
               keyAnswer: q.keyAnswer || "Kunci jawaban standar materi.",
@@ -3294,51 +3316,142 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             )}
 
+            {/* Grade Filter Tabs Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+              <div className="flex items-center space-x-2">
+                <Filter className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span className="text-xs font-bold text-slate-300">Filter Jenjang Soal:</span>
+                <span className="text-[11px] text-slate-400">
+                  (Menampilkan {filteredBankQuestions.length} dari {questions.length} butir soal)
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setQuestionGradeFilter("Semua")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    questionGradeFilter === "Semua"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800"
+                  }`}
+                >
+                  <span>Semua (Default)</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20 font-bold">
+                    {questionCountsByGrade.semua}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setQuestionGradeFilter("X")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    questionGradeFilter === "X"
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-blue-300 hover:text-white hover:bg-blue-900/30"
+                  }`}
+                >
+                  <span>Kelas X</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-500/30 font-bold">
+                    {questionCountsByGrade.x}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setQuestionGradeFilter("XI")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    questionGradeFilter === "XI"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "text-emerald-300 hover:text-white hover:bg-emerald-900/30"
+                  }`}
+                >
+                  <span>Kelas XI</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/30 font-bold">
+                    {questionCountsByGrade.xi}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setQuestionGradeFilter("XII")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer ${
+                    questionGradeFilter === "XII"
+                      ? "bg-purple-600 text-white shadow-sm"
+                      : "text-purple-300 hover:text-white hover:bg-purple-900/30"
+                  }`}
+                >
+                  <span>Kelas XII</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/30 font-bold">
+                    {questionCountsByGrade.xii}
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {/* Questions List */}
             <div className="space-y-4">
-              {questions.map((q, idx) => {
-                const typeLabel =
-                  q.type === "mcq"
-                    ? "Pilihan Ganda"
-                    : q.type === "true_false"
-                    ? "Benar / Salah"
-                    : q.type === "matching"
-                    ? "Menjodohkan"
-                    : q.type === "multi_choice"
-                    ? "PG Kompleks"
-                    : q.type === "short_answer"
-                    ? "Isian Singkat"
-                    : "Uraian / Essay";
+              {filteredBankQuestions.length === 0 ? (
+                <div className="p-8 text-center bg-slate-950 border border-slate-800 rounded-2xl text-slate-400 space-y-2">
+                  <p className="text-sm font-semibold">
+                    Tidak ada butir soal untuk filter "{questionGradeFilter === "Semua" ? "Semua Soal" : `Kelas ${questionGradeFilter}`}".
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Klik 'Tambah Soal Baru' atau gunakan 'Generate AI' / 'Upload' untuk menambahkan soal pada jenjang kelas ini.
+                  </p>
+                </div>
+              ) : (
+                filteredBankQuestions.map((q, idx) => {
+                  const typeLabel =
+                    q.type === "mcq"
+                      ? "Pilihan Ganda"
+                      : q.type === "true_false"
+                      ? "Benar / Salah"
+                      : q.type === "matching"
+                      ? "Menjodohkan"
+                      : q.type === "multi_choice"
+                      ? "PG Kompleks"
+                      : q.type === "short_answer"
+                      ? "Isian Singkat"
+                      : "Uraian / Essay";
 
-                const typeBadgeClass =
-                  q.type === "mcq"
-                    ? "bg-blue-600/20 border-blue-500/30 text-blue-300"
-                    : q.type === "true_false"
-                    ? "bg-emerald-600/20 border-emerald-500/30 text-emerald-300"
-                    : q.type === "matching"
-                    ? "bg-purple-600/20 border-purple-500/30 text-purple-300"
-                    : q.type === "multi_choice"
-                    ? "bg-indigo-600/20 border-indigo-500/30 text-indigo-300"
-                    : q.type === "short_answer"
-                    ? "bg-amber-600/20 border-amber-500/30 text-amber-300"
-                    : "bg-teal-600/20 border-teal-500/30 text-teal-300";
+                  const typeBadgeClass =
+                    q.type === "mcq"
+                      ? "bg-blue-600/20 border-blue-500/30 text-blue-300"
+                      : q.type === "true_false"
+                      ? "bg-emerald-600/20 border-emerald-500/30 text-emerald-300"
+                      : q.type === "matching"
+                      ? "bg-purple-600/20 border-purple-500/30 text-purple-300"
+                      : q.type === "multi_choice"
+                      ? "bg-indigo-600/20 border-indigo-500/30 text-indigo-300"
+                      : q.type === "short_answer"
+                      ? "bg-amber-600/20 border-amber-500/30 text-amber-300"
+                      : "bg-teal-600/20 border-teal-500/30 text-teal-300";
 
-                return (
-                  <div
-                    key={q.id}
-                    className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3"
-                  >
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                        <span className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 font-bold text-xs flex items-center justify-center">
-                          {idx + 1}
-                        </span>
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border uppercase ${typeBadgeClass}`}>
-                          {typeLabel}
-                        </span>
-                        <span className="text-xs font-bold text-amber-400">
-                          {q.points} Poin
-                        </span>
+                  const gradeBadge = getTingkatBadgeConfig(q.tingkatKelas);
+
+                  return (
+                    <div
+                      key={q.id}
+                      className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3"
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          <span className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 font-bold text-xs flex items-center justify-center">
+                            {idx + 1}
+                          </span>
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border uppercase ${typeBadgeClass}`}>
+                            {typeLabel}
+                          </span>
+
+                          {/* Target Grade Badge */}
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${gradeBadge.badgeClass}`}>
+                            {gradeBadge.label}
+                          </span>
+
+                          <span className="text-xs font-bold text-amber-400">
+                            {q.points} Poin
+                          </span>
 
                         {/* Media Indicator Badges */}
                         {q.mediaType && q.mediaType !== "none" && (
@@ -3560,7 +3673,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
         )}
@@ -4045,6 +4158,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   onChange={(e) => setAiTopic(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Target Kelas Soal yang Dibuat:
+                </label>
+                <select
+                  value={aiTargetKelas}
+                  onChange={(e) => setAiTargetKelas(e.target.value as TingkatKelas)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-bold text-cyan-300 focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+                >
+                  <option value="Semua Kelas">Semua Kelas (Universal)</option>
+                  <option value="X">Kelas X</option>
+                  <option value="XI">Kelas XI</option>
+                  <option value="XII">Kelas XII</option>
+                </select>
               </div>
 
               <div>

@@ -1,10 +1,11 @@
 import * as XLSX from "xlsx";
-import { Question, QuestionType, MatchingPair } from "../types";
+import { Question, QuestionType, MatchingPair, TingkatKelas, parseTingkatKelas } from "../types";
 
 export function downloadExcelQuestionTemplate(): void {
   const rows = [
     {
       "No": 1,
+      "Kelas": "Semua Kelas",
       "Tipe Soal": "PG",
       "Pertanyaan": "Manakah protokol jaringan yang bertugas menyediakan enkripsi saat browsing web?",
       "Opsi A": "HTTP",
@@ -21,6 +22,7 @@ export function downloadExcelQuestionTemplate(): void {
     },
     {
       "No": 2,
+      "Kelas": "X",
       "Tipe Soal": "PG",
       "Pertanyaan": "Tentukan akar dari persamaan kuadrat $x^2 - 5x + 6 = 0$:",
       "Opsi A": "$x = 1$ atau $x = 6$",
@@ -203,9 +205,28 @@ export function parseQuestionsFromExcel(buffer: ArrayBuffer): Omit<Question, "id
     const optE = String(row["Opsi E"] || "").trim();
     const options = [optA, optB, optC, optD, optE].filter(Boolean);
 
+    // Parse target class / grade level attribute (default 'Semua Kelas' if empty)
+    const rawKelas = String(
+      row["Kelas"] ||
+      row["Target Kelas"] ||
+      row["Tingkat Kelas"] ||
+      row["tingkatKelas"] ||
+      row["Jenjang"] ||
+      row["Grade"] ||
+      ""
+    ).trim();
+    let tingkatKelas: TingkatKelas = "Semua Kelas";
+    if (rawKelas) {
+      const parsedTingkat = parseTingkatKelas(rawKelas);
+      if (parsedTingkat) {
+        tingkatKelas = parsedTingkat;
+      }
+    }
+
     const questionItem: Omit<Question, "id"> = {
       type: qType,
       question: qText,
+      tingkatKelas,
       points,
       mediaType,
       mediaUrl,

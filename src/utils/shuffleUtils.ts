@@ -1,4 +1,4 @@
-import { Question, Student, ExamConfig } from "../types";
+import { Question, Student, ExamConfig, isQuestionForStudent } from "../types";
 
 /**
  * 32-bit FNV-1a or polynomial rolling hash function to convert seed string to numeric hash.
@@ -51,17 +51,22 @@ export interface ShuffledOption {
 
 /**
  * Returns questions for a student:
- * If config.randomizeQuestions is true (or undefined, defaulting to true for anti-cheating),
- * questions are deterministically shuffled using the student's unique identifiers and exam ID.
+ * 1. Filters only questions for 'Semua Kelas' OR matching the student's grade level (X, XI, XII).
+ * 2. If config.randomizeQuestions is true (or undefined, defaulting to true for anti-cheating),
+ *    questions are deterministically shuffled using the student's unique identifiers and exam ID.
  */
 export function getStudentExamQuestions(
   questions: Question[],
   student: Student,
   config: ExamConfig
 ): Question[] {
+  // Filter questions for student's grade level ('Semua Kelas' or matching grade)
+  const studentFiltered = questions.filter((q) => isQuestionForStudent(q, student?.className));
+  const questionsPool = studentFiltered.length > 0 ? studentFiltered : questions;
+
   // If explicitly disabled by admin, return original order
   if (config.randomizeQuestions === false) {
-    return questions;
+    return questionsPool;
   }
 
   // Generate unique deterministic seed per student
@@ -69,7 +74,7 @@ export function getStudentExamQuestions(
   const examKey = config.id || config.subject || "exam";
   const seed = `exam_q_shuffle_${examKey}_${studentKey}`;
 
-  return seededShuffle(questions, seed);
+  return seededShuffle(questionsPool, seed);
 }
 
 /**

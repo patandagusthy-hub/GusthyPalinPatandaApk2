@@ -218,7 +218,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
               {config.subject}
             </h1>
             <p className="text-[11px] text-slate-400">
-              Peserta: <strong className="text-slate-200">{student.name}</strong> ({student.nisn})
+              Peserta: <strong className="text-slate-200">{student.name}</strong> ({student.nisn}) &bull; Kelas: <span className="text-cyan-300 font-bold">{student.className}</span>
             </p>
           </div>
         </div>

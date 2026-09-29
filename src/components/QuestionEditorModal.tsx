@@ -22,7 +22,7 @@ import {
   Percent,
   History,
 } from "lucide-react";
-import { Question, QuestionType, MatchingPair } from "../types";
+import { Question, QuestionType, MatchingPair, TingkatKelas } from "../types";
 import { MathRenderer } from "./MathRenderer";
 import { MediaDisplay } from "./MediaDisplay";
 
@@ -51,6 +51,9 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
 
   // Question Basic Data
   const [type, setType] = useState<QuestionType>(targetQuestion?.type || "mcq");
+  const [tingkatKelas, setTingkatKelas] = useState<TingkatKelas>(
+    targetQuestion?.tingkatKelas || "Semua Kelas"
+  );
   const [questionText, setQuestionText] = useState(targetQuestion?.question || "");
   const [points, setPoints] = useState<number>(targetQuestion?.points ?? 10);
   const [subject, setSubject] = useState(targetQuestion?.subject || "");
@@ -148,6 +151,7 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
     const payload: Omit<Question, "id"> = {
       type,
       question: (questionText || "").trim(),
+      tingkatKelas: tingkatKelas || "Semua Kelas",
       points: Number(points) || 10,
       subject: (subject || "").trim() || undefined,
       explanation: (explanation || "").trim() || undefined,
@@ -198,6 +202,7 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
     id: question?.id || "preview-q",
     type,
     question: questionText,
+    tingkatKelas,
     options: options.filter(Boolean),
     correctAnswer,
     correctAnswers,
@@ -287,8 +292,8 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-6">
           {activeTab === "edit" ? (
             <form id="question-editor-form" onSubmit={handleSubmit} className="space-y-6">
-              {/* Row 1: Question Type & Points & Subject */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Row 1: Question Type & Target Kelas & Points & Subject */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                     Tipe Variasi Soal <span className="text-rose-400">*</span>
@@ -304,6 +309,22 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
                     <option value="multi_choice">Pilihan Ganda Kompleks (Multi Checkbox)</option>
                     <option value="short_answer">Isian Singkat</option>
                     <option value="essay">Uraian / Essay (AI Gemini Evaluated)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    Target Kelas <span className="text-rose-400">*</span>
+                  </label>
+                  <select
+                    value={tingkatKelas}
+                    onChange={(e) => setTingkatKelas(e.target.value as TingkatKelas)}
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs font-bold text-cyan-300 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                  >
+                    <option value="Semua Kelas">Semua Kelas (Universal)</option>
+                    <option value="X">Kelas X</option>
+                    <option value="XI">Kelas XI</option>
+                    <option value="XII">Kelas XII</option>
                   </select>
                 </div>
 

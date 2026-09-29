@@ -1,5 +1,5 @@
 import mammoth from "mammoth";
-import { Question, QuestionType, MatchingPair } from "../types";
+import { Question, QuestionType, MatchingPair, TingkatKelas, parseTingkatKelas } from "../types";
 
 export interface ParsedQuestionResult {
   questions: Omit<Question, "id">[];
@@ -45,6 +45,7 @@ export function downloadWordTemplate(): void {
     <ol>
       <li>Setiap butir soal diawali dengan nomor urut dan tanda titik (contoh: <strong>1. </strong>, <strong>2. </strong>).</li>
       <li>Tuliskan tipe soal dengan tag awalan jika bukan PG biasa: <strong>[BENAR_SALAH]</strong>, <strong>[JODOHKAN]</strong>, <strong>[KOMPLEKS]</strong>, <strong>[ISIAN]</strong>, atau <strong>[ESSAY]</strong>.</li>
+      <li><strong>Target Jenjang Kelas:</strong> Tambahkan tag <code>[KELAS: X]</code>, <code>[KELAS: XI]</code>, <code>[KELAS: XII]</code>, atau <code>[KELAS: Semua Kelas]</code> di bawah nomor soal. Jika dikosongkan, otomatis ditujukan untuk <strong>Semua Kelas</strong>.</li>
       <li>Untuk rumus Matematika / Sains (LaTeX), gunakan simbol dolar: <code>$x^2 + y^2 = r^2$</code> atau display <code>$$\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$</code>.</li>
       <li>Simpan berkas dalam format <strong>.docx</strong> atau <strong>.doc</strong> lalu unggah di Bank Soal.</li>
     </ol>
@@ -260,6 +261,10 @@ export function parseQuestionsFromText(rawText: string): ParsedQuestionResult {
   const shortTagRegex = /\[(?:ISIAN|SHORT|ISIAN_SINGKAT)\]/i;
   const essayTagRegex = /\[(?:ESSAY|URAIAN)\]/i;
 
+  // Grade level tags regex
+  const gradeTagRegex = /\[(?:KELAS|TINGKAT|TARGET_KELAS|GRADE)\s*[:=]\s*(.+?)\]/i;
+  const gradeLineRegex = /^(?:KELAS|TINGKAT|TARGET\s+KELAS|GRADE)\s*[:=]\s*(.+)$/i;
+
   blocks.forEach((block, index) => {
     let questionText = block.header;
     const blockLines = block.lines;
@@ -279,6 +284,15 @@ export function parseQuestionsFromText(rawText: string): ParsedQuestionResult {
       .replace(shortTagRegex, "")
       .replace(essayTagRegex, "")
       .trim();
+
+    // Check grade in question header (e.g. [KELAS: X])
+    let tingkatKelas: TingkatKelas = "Semua Kelas";
+    const gradeInHeader = questionText.match(gradeTagRegex);
+    if (gradeInHeader) {
+      const parsed = parseTingkatKelas(gradeInHeader[1].trim());
+      if (parsed) tingkatKelas = parsed;
+      questionText = questionText.replace(gradeTagRegex, "").trim();
+    }
 
     const options: string[] = [];
     const matchingPairs: MatchingPair[] = [];
@@ -315,6 +329,13 @@ export function parseQuestionsFromText(rawText: string): ParsedQuestionResult {
 
     // Process line by line
     for (const line of blockLines) {
+      // Check grade tags in lines (e.g. KELAS: XI or [KELAS: XII])
+      const gradeMatch = line.match(gradeLineRegex) || line.match(gradeTagRegex);
+      if (gradeMatch) {
+        const parsed = parseTingkatKelas(gradeMatch[1].trim());
+        if (parsed) tingkatKelas = parsed;
+        continue;
+      }
       // Check type tags in lines
       if (tfTagRegex.test(line)) {
         qType = "true_false";
@@ -441,6 +462,7 @@ export function parseQuestionsFromText(rawText: string): ParsedQuestionResult {
     const qItem: Omit<Question, "id"> = {
       type: qType,
       question: questionText.trim(),
+      tingkatKelas,
       points: finalPoints,
       mediaType,
       mediaUrl,

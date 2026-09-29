@@ -13,7 +13,7 @@ import {
   Trash2,
   Sparkles,
 } from "lucide-react";
-import { Question } from "../types";
+import { Question, getTingkatBadgeConfig } from "../types";
 import {
   downloadWordTemplate,
   parseWordFile,
@@ -384,6 +384,14 @@ POIN: 20`;
                         >
                           {q.type === "mcq" ? "Pilihan Ganda" : "Essay"}
                         </span>
+                        {(() => {
+                          const badge = getTingkatBadgeConfig(q.tingkatKelas);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${badge.badgeClass}`}>
+                              {badge.label}
+                            </span>
+                          );
+                        })()}
                         <span className="text-[11px] font-bold text-amber-400">
                           {q.points} Poin
                         </span>

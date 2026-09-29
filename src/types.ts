@@ -93,10 +93,13 @@ export interface QuestionRevision {
   };
 }
 
+export type TingkatKelas = "Semua Kelas" | "X" | "XI" | "XII";
+
 export interface Question {
   id: string;
   type: QuestionType;
   question: string;
+  tingkatKelas?: TingkatKelas; // 'Semua Kelas' | 'X' | 'XI' | 'XII' (default: 'Semua Kelas')
   options?: string[]; // for mcq & multi_choice
   correctAnswer?: number; // index 0-4 for single mcq
   correctAnswers?: number[]; // indices for multi_choice (e.g. [0, 2])
@@ -240,4 +243,100 @@ export interface BackupFileInfo {
   questionsCount: number;
   label?: string;
 }
+
+/**
+ * Extracts student class grade level ('X', 'XI', or 'XII') based on class name prefix.
+ * Supports patterns like 'X-A', 'X TKJ 1', 'XI MIPA 2', 'XII-IPS 1', 'Kelas 10', '12 IPA', etc.
+ */
+export function parseTingkatKelas(className?: string): "X" | "XI" | "XII" | null {
+  if (!className) return null;
+  const clean = className.trim().toUpperCase().replace(/^KELAS\s+/i, "");
+
+  // Check Roman numerals or Arabic numerals (highest to lowest to avoid partial prefix conflict)
+  if (
+    clean.startsWith("XII") ||
+    clean.startsWith("12") ||
+    /^(XII|12)\b/i.test(clean) ||
+    /^(XII|12)[^A-Za-z0-9]/i.test(clean)
+  ) {
+    return "XII";
+  }
+
+  if (
+    clean.startsWith("XI") ||
+    clean.startsWith("11") ||
+    /^(XI|11)\b/i.test(clean) ||
+    /^(XI|11)[^A-Za-z0-9]/i.test(clean)
+  ) {
+    return "XI";
+  }
+
+  if (
+    clean.startsWith("X") ||
+    clean.startsWith("10") ||
+    /^(X|10)\b/i.test(clean) ||
+    /^(X|10)[^A-Za-z0-9]/i.test(clean)
+  ) {
+    return "X";
+  }
+
+  return null;
+}
+
+/**
+ * Evaluates whether a question matches a student's grade level.
+ * Returns true if the question is for 'Semua Kelas' (or undefined) OR matches the student's extracted grade level.
+ */
+export function isQuestionForStudent(question: Question, studentClassName?: string): boolean {
+  const tingkat = question.tingkatKelas || "Semua Kelas";
+  if (tingkat === "Semua Kelas") return true;
+
+  const studentTingkat = parseTingkatKelas(studentClassName);
+  if (!studentTingkat) {
+    // If student grade cannot be determined, default to allowing 'Semua Kelas' only
+    return false;
+  }
+
+  return tingkat === studentTingkat;
+}
+
+/**
+ * Returns badge styling and human-readable label for a question's TingkatKelas.
+ * Abu-abu for 'Semua Kelas', Biru for 'Kelas X', Hijau for 'Kelas XI', Ungu for 'Kelas XII'.
+ */
+export function getTingkatBadgeConfig(tingkat?: TingkatKelas): {
+  label: string;
+  shortLabel: string;
+  badgeClass: string;
+} {
+  const val = tingkat || "Semua Kelas";
+  switch (val) {
+    case "X":
+      return {
+        label: "Kelas X",
+        shortLabel: "X",
+        badgeClass: "bg-blue-600/20 border-blue-500/40 text-blue-300",
+      };
+    case "XI":
+      return {
+        label: "Kelas XI",
+        shortLabel: "XI",
+        badgeClass: "bg-emerald-600/20 border-emerald-500/40 text-emerald-300",
+      };
+    case "XII":
+      return {
+        label: "Kelas XII",
+        shortLabel: "XII",
+        badgeClass: "bg-purple-600/20 border-purple-500/40 text-purple-300",
+      };
+    case "Semua Kelas":
+    default:
+      return {
+        label: "Semua Kelas",
+        shortLabel: "Semua",
+        badgeClass: "bg-slate-800 border-slate-700 text-slate-300",
+      };
+  }
+}
+
 

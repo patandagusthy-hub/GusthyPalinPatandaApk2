@@ -111,7 +111,7 @@ export function exportQuestionsToWord(
     questionsHtml += `
       <div style="margin-bottom: 18px; page-break-inside: avoid; border-bottom: 1px solid #e2e8f0; padding-bottom: 14px;">
         <div style="display: flex; justify-content: space-between; font-size: 9pt; color: #64748b; margin-bottom: 4px;">
-          <span><strong>Nomor ${qNum}</strong> &bull; Tipe: ${typeName}${includePoints ? ` &bull; Bobot: ${q.points} Poin` : ""}</span>
+          <span><strong>Nomor ${qNum}</strong> &bull; [${q.tingkatKelas || "Semua Kelas"}] &bull; Tipe: ${typeName}${includePoints ? ` &bull; Bobot: ${q.points} Poin` : ""}</span>
           ${q.lastModifiedBy ? `<span style="font-size: 8pt; color: #94a3b8;">Rev: ${q.lastModifiedBy}</span>` : ""}
         </div>
         <div style="font-size: 11pt; font-weight: 500; color: #0f172a; line-height: 1.5;">${q.question}</div>
@@ -259,6 +259,7 @@ export function exportQuestionsToExcel(questions: Question[], config: ExamConfig
     return {
       "No": qNum,
       "ID Soal": q.id,
+      "Kelas / Tingkat": q.tingkatKelas || "Semua Kelas",
       "Tipe Soal": typeName,
       "Pertanyaan": q.question,
       "Opsi A": optA,
@@ -421,6 +422,7 @@ export function printQuestionsAsPdf(
       <div class="question-block">
         <div class="q-header">
           <span class="q-num">Soal No. ${qNum}</span>
+          <span class="q-grade" style="font-weight:700; color:#2563eb; background:#eff6ff; padding:1px 6px; border-radius:4px; font-size:8pt; border:1px solid #bfdbfe;">${q.tingkatKelas || "Semua Kelas"}</span>
           <span class="q-type">${typeName}</span>
           ${includePoints ? `<span class="q-points">${q.points} Poin</span>` : ""}
         </div>
