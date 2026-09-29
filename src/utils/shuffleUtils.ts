@@ -60,9 +60,18 @@ export function getStudentExamQuestions(
   student: Student,
   config: ExamConfig
 ): Question[] {
-  // Filter questions for student's grade level ('Semua Kelas' or matching grade)
-  const studentFiltered = questions.filter((q) => isQuestionForStudent(q, student?.className));
-  const questionsPool = studentFiltered.length > 0 ? studentFiltered : questions;
+  // 1. If an active package is selected (and not 'all'), filter by active package
+  let pool = questions;
+  if (config.activePackageId && config.activePackageId !== "all") {
+    const pkgQuestions = questions.filter((q) => q.packageId === config.activePackageId);
+    if (pkgQuestions.length > 0) {
+      pool = pkgQuestions;
+    }
+  }
+
+  // 2. Filter questions for student's grade level ('Semua Kelas' or matching grade)
+  const studentFiltered = pool.filter((q) => isQuestionForStudent(q, student?.className));
+  const questionsPool = studentFiltered.length > 0 ? studentFiltered : pool;
 
   // If explicitly disabled by admin, return original order
   if (config.randomizeQuestions === false) {

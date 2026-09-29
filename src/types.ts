@@ -95,8 +95,22 @@ export interface QuestionRevision {
 
 export type TingkatKelas = "Semua Kelas" | "X" | "XI" | "XII";
 
+export interface QuestionPackage {
+  id: string;
+  name: string; // e.g. "XII TKA.docx" atau "Paket Soal Utama CBT"
+  fileName?: string;
+  subject?: string;
+  tingkatKelas?: TingkatKelas;
+  description?: string;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
 export interface Question {
   id: string;
+  packageId?: string; // ID Berkas / Paket Soal
+  packageName?: string; // Nama Berkas / Paket Soal
   type: QuestionType;
   question: string;
   tingkatKelas?: TingkatKelas; // 'Semua Kelas' | 'X' | 'XI' | 'XII' (default: 'Semua Kelas')
@@ -168,6 +182,7 @@ export interface ExamConfig {
   activeClasses?: string[]; // Daftar kelas yang diizinkan/diaktifkan untuk ujian
   allClassesActive?: boolean; // Jika true, semua kelas aktif; jika false, hanya activeClasses
   aiRubricConfig?: AIRubricConfig; // Parameter kelonggaran dan mode evaluasi AI untuk essay
+  activePackageId?: string; // ID Berkas / Paket Soal yang aktif untuk ujian siswa ('all' atau ID paket spesifik)
 }
 
 export interface DistractorAnalysis {

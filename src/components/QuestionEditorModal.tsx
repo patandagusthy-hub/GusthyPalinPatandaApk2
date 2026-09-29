@@ -22,15 +22,18 @@ import {
   Percent,
   History,
 } from "lucide-react";
-import { Question, QuestionType, MatchingPair, TingkatKelas } from "../types";
+import { Question, QuestionType, MatchingPair, TingkatKelas, QuestionPackage } from "../types";
 import { MathRenderer } from "./MathRenderer";
 import { MediaDisplay } from "./MediaDisplay";
+import { Folder } from "lucide-react";
 
 interface QuestionEditorModalProps {
   isOpen?: boolean;
   onClose: () => void;
   question?: Question | null; // null if creating new
   initialQuestion?: Question | null; // alternative prop name
+  packages?: QuestionPackage[];
+  defaultPackageId?: string;
   onSave: (question: Omit<Question, "id">, id?: string) => void;
   onOpenRevisionHistory?: (question: Question) => void;
 }
@@ -40,6 +43,8 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
   onClose,
   question,
   initialQuestion,
+  packages = [],
+  defaultPackageId,
   onSave,
   onOpenRevisionHistory,
 }) => {
@@ -48,6 +53,11 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
 
   // Active Tab: Editor Form vs Live Preview
   const [activeTab, setActiveTab] = useState<"edit" | "preview">("edit");
+
+  // Package Data
+  const [packageId, setPackageId] = useState<string>(
+    targetQuestion?.packageId || defaultPackageId || packages[0]?.id || "pkg-default"
+  );
 
   // Question Basic Data
   const [type, setType] = useState<QuestionType>(targetQuestion?.type || "mcq");
@@ -147,8 +157,14 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
       return;
     }
 
+    const targetPkg = packages.find((p) => p.id === packageId);
+    const finalPkgId = packageId || defaultPackageId || packages[0]?.id || "pkg-default";
+    const finalPkgName = targetPkg?.name || "Berkas Soal";
+
     // Build question payload
     const payload: Omit<Question, "id"> = {
+      packageId: finalPkgId,
+      packageName: finalPkgName,
       type,
       question: (questionText || "").trim(),
       tingkatKelas: tingkatKelas || "Semua Kelas",
@@ -292,6 +308,39 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-6">
           {activeTab === "edit" ? (
             <form id="question-editor-form" onSubmit={handleSubmit} className="space-y-6">
+              {/* Berkas / Dokumen Soal Container (Soal Terpisah Tidak Gabung) */}
+              {packages && packages.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-cyan-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center shrink-0">
+                      <Folder className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-white">
+                        Simpan ke Berkas / Naskah Soal <span className="text-rose-400">*</span>:
+                      </label>
+                      <p className="text-[11px] text-slate-400">
+                        Soal ini akan disimpan terpisah di dalam berkas yang Anda pilih agar tidak tercampur.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="min-w-[240px]">
+                    <select
+                      value={packageId}
+                      onChange={(e) => setPackageId(e.target.value)}
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-bold text-cyan-300 focus:outline-none focus:ring-2 focus:ring-cyan-500 cursor-pointer"
+                    >
+                      {packages.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          📁 {p.name} ({p.tingkatKelas || "Semua Kelas"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
               {/* Row 1: Question Type & Target Kelas & Points & Subject */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>

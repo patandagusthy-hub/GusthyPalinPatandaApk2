@@ -3,7 +3,9 @@ import {
   Student,
   TeacherOrAdmin,
   Question,
+  QuestionPackage,
   QuestionRevision,
+  TingkatKelas,
   ExamConfig,
   ViolationRecord,
   Role,
@@ -17,7 +19,35 @@ import {
   INITIAL_ADMINS,
   INITIAL_QUESTIONS,
   INITIAL_EXAM_CONFIG,
+  INITIAL_PACKAGES,
 } from "../data/initialData";
+
+export function normalizeQuestionsWithPackages(qs: Question[]): Question[] {
+  return qs.map((q) => {
+    if (!q.packageId) {
+      const text = (q.question || "").toLowerCase();
+      if (
+        text.includes("electric vehicle") ||
+        text.includes("ev") ||
+        text.includes("according to the passage") ||
+        text.includes("xii tka")
+      ) {
+        return {
+          ...q,
+          packageId: "pkg-xii-tka",
+          packageName: "XII TKA.docx",
+          tingkatKelas: q.tingkatKelas || "XII",
+        };
+      }
+      return {
+        ...q,
+        packageId: "pkg-default",
+        packageName: "Naskah Soal Utama CBT",
+      };
+    }
+    return q;
+  });
+}
 import {
   parseStudentScanPayload,
   generateUniqueStudentToken,
@@ -157,7 +187,21 @@ export function useExamStore() {
   });
 
   // 3. Questions - Firestore Collection 'questions'
-  const [questions, setQuestions] = useState<Question[]>(INITIAL_QUESTIONS);
+  const [questions, setQuestions] = useState<Question[]>(() => {
+    return normalizeQuestionsWithPackages(INITIAL_QUESTIONS);
+  });
+
+  // 3b. Question Packages (Berkas / Paket Naskah Soal) - Firestore Collection 'question_packages'
+  const [questionPackages, setQuestionPackages] = useState<QuestionPackage[]>(() => {
+    try {
+      const raw = safeStorage.getItem("GPP_EXAM_PACKAGES_V1");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_PACKAGES;
+  });
 
   // 4. Exam Config - Firestore Document 'settings/examConfig'
   const [examConfig, setExamConfig] = useState<ExamConfig>(INITIAL_EXAM_CONFIG);
@@ -466,19 +510,47 @@ export function useExamStore() {
               fetchedQuestions.push({ ...q, id: q.id || docSnap.id });
             });
             if (fetchedQuestions.length > 0) {
-              fetchedQuestions.sort((a, b) => {
+              const normalized = normalizeQuestionsWithPackages(fetchedQuestions);
+              normalized.sort((a, b) => {
                 const numA = parseInt((a.id || "").replace(/\D/g, ""), 10);
                 const numB = parseInt((b.id || "").replace(/\D/g, ""), 10);
                 if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
                 return (a.id || "").localeCompare(b.id || "");
               });
-              setQuestions(fetchedQuestions);
+              setQuestions(normalized);
             }
             setFirebaseStatus("connected");
             setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
           },
           (err) => {
             console.warn("[Firebase] Questions onSnapshot notice:", err);
+          }
+        );
+
+        // =====================================================================
+        // Real-Time Listener 2b: Question Packages Collection
+        // =====================================================================
+        const unsubPackages = onSnapshot(
+          collection(db, "question_packages"),
+          (snapshot) => {
+            if (!isMounted) return;
+            const fetchedPackages: QuestionPackage[] = [];
+            snapshot.forEach((docSnap) => {
+              const p = docSnap.data() as QuestionPackage;
+              fetchedPackages.push({ ...p, id: p.id || docSnap.id });
+            });
+            if (fetchedPackages.length > 0) {
+              const existingIds = new Set(fetchedPackages.map((p) => p.id));
+              const combined = [...fetchedPackages];
+              INITIAL_PACKAGES.forEach((ip) => {
+                if (!existingIds.has(ip.id)) combined.push(ip);
+              });
+              setQuestionPackages(combined);
+              safeStorage.setItem("GPP_EXAM_PACKAGES_V1", JSON.stringify(combined));
+            }
+          },
+          (err) => {
+            console.warn("[Firebase] Question packages onSnapshot notice:", err);
           }
         );
 
@@ -545,6 +617,7 @@ export function useExamStore() {
         return () => {
           unsubStudents();
           unsubQuestions();
+          unsubPackages();
           unsubConfig();
           unsubClasses();
           unsubStaff();
@@ -1789,73 +1862,216 @@ export function useExamStore() {
   // =========================================================================
   // QUESTION MANAGEMENT IN FIREBASE FIRESTORE
   // =========================================================================
-  const addQuestion = useCallback(async (q: Omit<Question, "id">, modifierInfo?: string) => {
-    const creator =
-      modifierInfo ||
-      (currentUser?.name ? `${currentUser.name} (${currentUser.role})` : "Admin/Guru");
+  const addQuestion = useCallback(
+    async (
+      q: Omit<Question, "id">,
+      modifierInfo?: string,
+      targetPackageId?: string,
+      targetPackageName?: string
+    ) => {
+      const creator =
+        modifierInfo ||
+        (currentUser?.name ? `${currentUser.name} (${currentUser.role})` : "Admin/Guru");
 
-    const initialRev: QuestionRevision = {
-      id: "rev-" + Date.now(),
-      timestamp: new Date().toISOString(),
-      modifiedBy: creator,
-      role: (currentUser?.role as "admin" | "guru") || "admin",
-      changeType: "CREATE",
-      summary: "Pembuatan butir soal baru",
-    };
+      const pkgId = targetPackageId || q.packageId || examConfig.activePackageId || "pkg-default";
+      const pkgName = targetPackageName || q.packageName || questionPackages.find((p) => p.id === pkgId)?.name || "Berkas Soal";
 
-    const newQ: Question = {
-      ...q,
-      id: "q-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
-      lastModifiedBy: creator,
-      lastModifiedAt: new Date().toISOString(),
-      revisionHistory: [initialRev],
-    };
+      const initialRev: QuestionRevision = {
+        id: "rev-" + Date.now(),
+        timestamp: new Date().toISOString(),
+        modifiedBy: creator,
+        role: (currentUser?.role as "admin" | "guru") || "admin",
+        changeType: "CREATE",
+        summary: `Pembuatan butir soal baru pada berkas ${pkgName}`,
+      };
 
-    setQuestions((prev) => [...prev, newQ]);
+      const newQ: Question = {
+        ...q,
+        id: "q-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+        packageId: pkgId,
+        packageName: pkgName,
+        lastModifiedBy: creator,
+        lastModifiedAt: new Date().toISOString(),
+        revisionHistory: [initialRev],
+      };
 
-    try {
-      await setDoc(doc(db, "questions", newQ.id), cleanForFirestore(newQ));
-      setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
-    } catch (err) {
-      console.error("[Firebase] Error adding question to Firestore:", err);
-    }
-  }, [currentUser]);
+      setQuestions((prev) => [...prev, newQ]);
 
-  const bulkAddQuestions = useCallback(async (newQs: Omit<Question, "id">[]) => {
-    const creator = currentUser?.name ? `${currentUser.name} (${currentUser.role})` : "Admin/Guru";
-    const nowIso = new Date().toISOString();
+      try {
+        await setDoc(doc(db, "questions", newQ.id), cleanForFirestore(newQ));
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error adding question to Firestore:", err);
+      }
+    },
+    [currentUser, examConfig.activePackageId, questionPackages]
+  );
 
-    const questionsWithIds: Question[] = newQs.map((q, idx) => ({
-      ...q,
-      id: "q-" + Date.now() + "-" + idx + "-" + Math.random().toString(36).slice(2, 6),
-      lastModifiedBy: creator,
-      lastModifiedAt: nowIso,
-      revisionHistory: [
-        {
-          id: "rev-" + Date.now() + "-" + idx,
-          timestamp: nowIso,
-          modifiedBy: creator,
-          role: (currentUser?.role as "admin" | "guru") || "admin",
-          changeType: "CREATE",
-          summary: "Impor butir soal dokumen Word/Excel",
-        },
-      ],
-    }));
+  const bulkAddQuestions = useCallback(
+    async (
+      newQs: Omit<Question, "id">[],
+      targetPackageId?: string,
+      targetPackageName?: string
+    ) => {
+      const creator = currentUser?.name ? `${currentUser.name} (${currentUser.role})` : "Admin/Guru";
+      const nowIso = new Date().toISOString();
+      const pkgId = targetPackageId || examConfig.activePackageId || "pkg-default";
+      const pkgName = targetPackageName || questionPackages.find((p) => p.id === pkgId)?.name || "Berkas Soal";
 
-    setQuestions((prev) => [...prev, ...questionsWithIds]);
-
-    try {
-      const ops = questionsWithIds.map((q) => ({
-        type: "set" as const,
-        ref: doc(db, "questions", q.id),
-        data: cleanForFirestore(q),
+      const questionsWithIds: Question[] = newQs.map((q, idx) => ({
+        ...q,
+        id: "q-" + Date.now() + "-" + idx + "-" + Math.random().toString(36).slice(2, 6),
+        packageId: q.packageId || pkgId,
+        packageName: q.packageName || pkgName,
+        lastModifiedBy: creator,
+        lastModifiedAt: nowIso,
+        revisionHistory: [
+          {
+            id: "rev-" + Date.now() + "-" + idx,
+            timestamp: nowIso,
+            modifiedBy: creator,
+            role: (currentUser?.role as "admin" | "guru") || "admin",
+            changeType: "CREATE",
+            summary: `Impor butir soal ke berkas ${pkgName}`,
+          },
+        ],
       }));
-      await commitBatchOperations(ops);
-      setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
-    } catch (err) {
-      console.error("[Firebase] Error bulk adding questions to Firestore:", err);
-    }
-  }, [currentUser]);
+
+      setQuestions((prev) => [...prev, ...questionsWithIds]);
+
+      try {
+        const ops = questionsWithIds.map((q) => ({
+          type: "set" as const,
+          ref: doc(db, "questions", q.id),
+          data: cleanForFirestore(q),
+        }));
+        await commitBatchOperations(ops);
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error bulk adding questions to Firestore:", err);
+      }
+    },
+    [currentUser, examConfig.activePackageId, questionPackages]
+  );
+
+  // =========================================================================
+  // QUESTION PACKAGES (BERKAS SOAL) MANAGEMENT
+  // =========================================================================
+  const createQuestionPackage = useCallback(
+    async (pkgData: {
+      name: string;
+      fileName?: string;
+      subject?: string;
+      tingkatKelas?: TingkatKelas;
+      description?: string;
+    }): Promise<QuestionPackage> => {
+      const id = "pkg-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+      const newPkg: QuestionPackage = {
+        id,
+        name: pkgData.name.trim(),
+        fileName: pkgData.fileName || pkgData.name.trim(),
+        subject: pkgData.subject || "Umum",
+        tingkatKelas: pkgData.tingkatKelas || "Semua Kelas",
+        description: pkgData.description || "",
+        createdAt: new Date().toISOString(),
+        createdBy: currentUser?.name ? `${currentUser.name} (${currentUser.role})` : "Admin",
+      };
+
+      setQuestionPackages((prev) => {
+        const updated = [...prev.filter((p) => p.id !== id), newPkg];
+        safeStorage.setItem("GPP_EXAM_PACKAGES_V1", JSON.stringify(updated));
+        return updated;
+      });
+
+      try {
+        await setDoc(doc(db, "question_packages", newPkg.id), cleanForFirestore(newPkg), { merge: true });
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error saving question package:", err);
+      }
+      return newPkg;
+    },
+    [currentUser]
+  );
+
+  const updateQuestionPackage = useCallback(
+    async (id: string, updates: Partial<QuestionPackage>) => {
+      setQuestionPackages((prev) => {
+        const updated = prev.map((p) =>
+          p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
+        );
+        safeStorage.setItem("GPP_EXAM_PACKAGES_V1", JSON.stringify(updated));
+        return updated;
+      });
+
+      // Also update packageName on questions belonging to this package
+      if (updates.name) {
+        setQuestions((prev) =>
+          prev.map((q) => (q.packageId === id ? { ...q, packageName: updates.name } : q))
+        );
+      }
+
+      try {
+        await setDoc(doc(db, "question_packages", id), cleanForFirestore(updates), { merge: true });
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error updating question package:", err);
+      }
+    },
+    []
+  );
+
+  const deleteQuestionPackage = useCallback(
+    async (id: string) => {
+      setQuestionPackages((prev) => {
+        const updated = prev.filter((p) => p.id !== id);
+        safeStorage.setItem("GPP_EXAM_PACKAGES_V1", JSON.stringify(updated));
+        return updated;
+      });
+
+      // Also remove questions in this package
+      const questionsToDelete = questions.filter((q) => q.packageId === id);
+      if (questionsToDelete.length > 0) {
+        setQuestions((prev) => prev.filter((q) => q.packageId !== id));
+        const delOps = questionsToDelete.map((q) => ({
+          type: "delete" as const,
+          ref: doc(db, "questions", q.id),
+        }));
+        commitBatchOperations(delOps).catch(() => {});
+      }
+
+      // If active package was deleted, fallback to remaining
+      if (examConfig.activePackageId === id) {
+        const remaining = questionPackages.filter((p) => p.id !== id);
+        const nextActiveId = remaining.length > 0 ? remaining[0].id : "all";
+        const updatedCfg = { ...examConfig, activePackageId: nextActiveId };
+        setExamConfig(updatedCfg);
+        setDoc(doc(db, "settings", "examConfig"), cleanForFirestore(updatedCfg), { merge: true }).catch(() => {});
+      }
+
+      try {
+        await deleteDoc(doc(db, "question_packages", id));
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error deleting package:", err);
+      }
+    },
+    [questions, examConfig, questionPackages]
+  );
+
+  const setActiveExamPackage = useCallback(
+    async (packageId: string) => {
+      const updated = { ...examConfig, activePackageId: packageId };
+      setExamConfig(updated);
+      try {
+        await setDoc(doc(db, "settings", "examConfig"), cleanForFirestore(updated), { merge: true });
+        setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+      } catch (err) {
+        console.error("[Firebase] Error setting active package:", err);
+      }
+    },
+    [examConfig]
+  );
 
   const deleteQuestion = useCallback(async (id: string) => {
     setQuestions((prev) => prev.filter((q) => q.id !== id));
@@ -2489,6 +2705,11 @@ export function useExamStore() {
     deleteQuestion,
     updateQuestion,
     restoreQuestionRevision,
+    questionPackages,
+    createQuestionPackage,
+    updateQuestionPackage,
+    deleteQuestionPackage,
+    setActiveExamPackage,
     setExamConfig,
     updateExamConfig,
     updateStaffProfile,

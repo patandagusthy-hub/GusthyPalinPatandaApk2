@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read and write for the school exam system collections
+    match /settings/{docId} {
+      allow read, write: if true;
+    }
+
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+
+    match /questions/{questionId} {
+      allow read, write: if true;
+    }
+
+    match /bank_soal/{questionId} {
+      allow read, write: if true;
+    }
+
+    match /exam_questions/{questionId} {
+      allow read, write: if true;
+    }
+
+    match /question_packages/{packageId} {
+      allow read, write: if true;
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Match all other documents
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

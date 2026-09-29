@@ -1,0 +1,91 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Student master profile, barcode tokens, exam session state, and answers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "className": { "type": "string" },
+        "nisn": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "startBarcodeToken": { "type": "string" },
+        "examStatus": { "type": "string" },
+        "score": { "type": "number" },
+        "answers": { "type": "object" },
+        "violationsLog": { "type": "array" }
+      },
+      "required": ["id", "name", "className"]
+    },
+    "Question": {
+      "title": "Question",
+      "description": "Exam and question bank item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "question": { "type": "string" },
+        "type": { "type": "string" },
+        "point": { "type": "number" },
+        "answerKey": { "type": "string" },
+        "options": { "type": "array" },
+        "packageId": { "type": "string" }
+      },
+      "required": ["id", "question"]
+    },
+    "QuestionPackage": {
+      "title": "QuestionPackage",
+      "description": "Exam question package",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Application settings including metadata, classes, examConfig, and staff users",
+      "type": "object",
+      "properties": {
+        "initialized": { "type": "boolean" },
+        "version": { "type": "number" },
+        "list": { "type": "array" },
+        "title": { "type": "string" },
+        "durationMinutes": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Collection of student profiles, exam progress, and answers"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of active exam questions"
+    },
+    "/bank_soal/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of saved question bank items"
+    },
+    "/exam_questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of exam question records"
+    },
+    "/question_packages/{packageId}": {
+      "schema": "QuestionPackage",
+      "description": "Bundled question packages for subjects and exams"
+    },
+    "/settings/{docId}": {
+      "schema": "Setting",
+      "description": "System settings, classes list, exam configuration, and staff logins"
+    },
+    "/test/{docId}": {
+      "schema": "Setting",
+      "description": "Connection test and diagnostics"
+    }
+  }
+}

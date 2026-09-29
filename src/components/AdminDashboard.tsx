@@ -51,14 +51,21 @@ import {
   Pause,
   Clock,
   Radio,
+  Folder,
+  FolderCheck,
+  Star,
+  Check,
+  ClipboardCopy,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { Student, Question, ExamConfig, TeacherOrAdmin, isSampleStudent, isExamClassActive, TingkatKelas, getTingkatBadgeConfig } from "../types";
+import { Student, Question, ExamConfig, TeacherOrAdmin, isSampleStudent, isExamClassActive, TingkatKelas, getTingkatBadgeConfig, QuestionPackage } from "../types";
+import { INITIAL_PACKAGES } from "../data/initialData";
 import { exportResultsToExcel, exportResultsToPDF } from "../utils/exportUtils";
 import { DuckRaceLive } from "./DuckRaceLive";
 import { generateQRCode, generateUniqueStudentToken, auditStudentTokens, ensureUniqueStudentTokens } from "../utils/barcodeUtils";
-import { WordQuestionUploadModal } from "./WordQuestionUploadModal";
-import { downloadWordTemplate } from "../utils/wordQuestionParser";
+import { WordQuestionUploadModal, WordQuestionImportMeta } from "./WordQuestionUploadModal";
+import { QuickPastePlaintextModal } from "./QuickPastePlaintextModal";
+import { downloadWordTemplate, parseWordFile } from "../utils/wordQuestionParser";
 import { downloadExcelQuestionTemplate, parseExcelQuestions } from "../utils/excelQuestionParser";
 import { deduplicateStudents } from "../utils/studentDeduplicator";
 import { DATABASE_CLASSES, canonicalizeClassName, deduplicateClasses, isSameClass } from "../utils/classUtils";
@@ -103,10 +110,19 @@ interface AdminDashboardProps {
   onBulkAddStudents: (newStudents: Student[]) => void;
   onCleanupDuplicateStudents?: () => Promise<{ totalCleaned: number; remainingCount: number }>;
   onDeleteSampleStudents?: () => void;
-  onAddQuestion: (q: Omit<Question, "id">) => void;
+  onAddQuestion: (
+    q: Omit<Question, "id">,
+    modifierInfo?: string,
+    targetPackageId?: string,
+    targetPackageName?: string
+  ) => void;
   onUpdateQuestion?: (id: string, updates: Partial<Question>) => void;
   onRestoreQuestionRevision?: (questionId: string, revisionId: string) => void;
-  onBulkAddQuestions?: (newQuestions: Omit<Question, "id">[]) => void;
+  onBulkAddQuestions?: (
+    newQuestions: Omit<Question, "id">[],
+    targetPackageId?: string,
+    targetPackageName?: string
+  ) => void;
   onDeleteQuestion: (id: string) => void;
   onOpenDuckRace?: () => void;
   onUpdateAdminProfile?: (
@@ -127,6 +143,17 @@ interface AdminDashboardProps {
   onRestoreBackup?: (filename: string) => Promise<{ success: boolean; message: string }>;
   onCreateManualBackup?: (label?: string) => Promise<boolean>;
   onRefreshAllData?: () => Promise<number>;
+  questionPackages?: QuestionPackage[];
+  onCreateQuestionPackage?: (pkg: {
+    name: string;
+    fileName?: string;
+    subject?: string;
+    tingkatKelas?: TingkatKelas;
+    description?: string;
+  }) => Promise<QuestionPackage>;
+  onUpdateQuestionPackage?: (id: string, updates: Partial<QuestionPackage>) => Promise<void>;
+  onDeleteQuestionPackage?: (id: string) => Promise<void>;
+  onSetActiveExamPackage?: (packageId: string) => Promise<void>;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
@@ -171,6 +198,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRestoreBackup,
   onCreateManualBackup,
   onRefreshAllData,
+  questionPackages = [],
+  onCreateQuestionPackage,
+  onUpdateQuestionPackage,
+  onDeleteQuestionPackage,
+  onSetActiveExamPackage,
 }) => {
   const [activeTab, setActiveTab] = useState<
     "students" | "master_students" | "results" | "questions" | "barcodes" | "duckrace" | "violations" | "settings" | "item_analysis"
@@ -265,8 +297,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [aiLoading, setAiLoading] = useState(false);
   const [aiGenMessage, setAiGenMessage] = useState<string | null>(null);
 
-  // Word Document Question Import state
+  // Word Document & Plaintext Question Import state
   const [showWordUploadModal, setShowWordUploadModal] = useState(false);
+  const [showQuickPasteModal, setShowQuickPasteModal] = useState(false);
   const [wordImportSuccessMsg, setWordImportSuccessMsg] = useState<string | null>(null);
 
   // Google Drive Modal state
@@ -524,59 +557,323 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [questionGradeFilter, setQuestionGradeFilter] = useState<"Semua" | "X" | "XI" | "XII">("Semua");
   const excelQuestionFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Filtered questions based on selected grade filter tab
-  const filteredBankQuestions = useMemo(() => {
-    if (questionGradeFilter === "Semua") return questions;
-    return questions.filter((q) => {
-      const tingkat = q.tingkatKelas || "Semua Kelas";
-      return tingkat === questionGradeFilter;
+  // List of question packages (fallback to INITIAL_PACKAGES if empty)
+  const packagesList = useMemo(() => {
+    return questionPackages && questionPackages.length > 0 ? questionPackages : INITIAL_PACKAGES;
+  }, [questionPackages]);
+
+  // Selected package tab in Bank Soal view. Default to config.activePackageId or "pkg-xii-tka"
+  const [selectedPackageId, setSelectedPackageId] = useState<string>(() => {
+    return config.activePackageId || packagesList[0]?.id || "pkg-xii-tka";
+  });
+
+  // Package Modal State (for creating new file or editing file info)
+  const [showPackageModal, setShowPackageModal] = useState<boolean>(false);
+  const [editingPackage, setEditingPackage] = useState<QuestionPackage | null>(null);
+  const [packageFormData, setPackageFormData] = useState<{
+    name: string;
+    subject: string;
+    tingkatKelas: TingkatKelas;
+    description: string;
+    setActive: boolean;
+  }>({
+    name: "",
+    subject: "Bahasa Inggris",
+    tingkatKelas: "XII",
+    description: "",
+    setActive: true,
+  });
+
+  const selectedPackage = useMemo(() => {
+    if (selectedPackageId === "all") return null;
+    return packagesList.find((p) => p.id === selectedPackageId) || null;
+  }, [packagesList, selectedPackageId]);
+
+  // Question count per package
+  const questionCountByPackage = useMemo(() => {
+    const counts: Record<string, number> = { all: questions.length };
+    packagesList.forEach((p) => {
+      counts[p.id] = 0;
     });
-  }, [questions, questionGradeFilter]);
+    questions.forEach((q) => {
+      const pid = q.packageId || "pkg-default";
+      counts[pid] = (counts[pid] || 0) + 1;
+    });
+    return counts;
+  }, [packagesList, questions]);
+
+  // Filtered questions based on selected package AND grade filter tab (SOAL TIDAK TERCAMPUR)
+  const filteredBankQuestions = useMemo(() => {
+    let pool = questions;
+    // 1. Separate by file/package: if a specific package is selected, ONLY show questions from that package!
+    if (selectedPackageId !== "all") {
+      pool = pool.filter((q) => {
+        const pid = q.packageId || "pkg-default";
+        return pid === selectedPackageId;
+      });
+    }
+    // 2. Filter by grade (if user clicks grade tab)
+    if (questionGradeFilter !== "Semua") {
+      pool = pool.filter((q) => {
+        const tingkat = q.tingkatKelas || "Semua Kelas";
+        return tingkat === questionGradeFilter;
+      });
+    }
+    return pool;
+  }, [questions, selectedPackageId, questionGradeFilter]);
 
   const questionCountsByGrade = useMemo(() => {
+    const base =
+      selectedPackageId !== "all"
+        ? questions.filter((q) => (q.packageId || "pkg-default") === selectedPackageId)
+        : questions;
     return {
-      semua: questions.length,
-      x: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "X").length,
-      xi: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XI").length,
-      xii: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XII").length,
-      universal: questions.filter((q) => (q.tingkatKelas || "Semua Kelas") === "Semua Kelas").length,
+      semua: base.length,
+      x: base.filter((q) => (q.tingkatKelas || "Semua Kelas") === "X").length,
+      xi: base.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XI").length,
+      xii: base.filter((q) => (q.tingkatKelas || "Semua Kelas") === "XII").length,
+      universal: base.filter((q) => (q.tingkatKelas || "Semua Kelas") === "Semua Kelas").length,
     };
-  }, [questions]);
+  }, [questions, selectedPackageId]);
+
+  const handleOpenCreatePackageModal = (prefillName?: string) => {
+    setEditingPackage(null);
+    setPackageFormData({
+      name: prefillName || "",
+      subject: config.subject || "Bahasa Inggris",
+      tingkatKelas: "XII",
+      description: "",
+      setActive: true,
+    });
+    setShowPackageModal(true);
+  };
+
+  const handleOpenEditPackageModal = (pkg: QuestionPackage) => {
+    setEditingPackage(pkg);
+    setPackageFormData({
+      name: pkg.name,
+      subject: pkg.subject || "Umum",
+      tingkatKelas: pkg.tingkatKelas || "Semua Kelas",
+      description: pkg.description || "",
+      setActive: config.activePackageId === pkg.id,
+    });
+    setShowPackageModal(true);
+  };
+
+  const handleSavePackageModal = async () => {
+    if (!packageFormData.name.trim()) {
+      alert("Nama berkas / naskah soal tidak boleh kosong.");
+      return;
+    }
+
+    try {
+      if (editingPackage) {
+        if (onUpdateQuestionPackage) {
+          await onUpdateQuestionPackage(editingPackage.id, {
+            name: packageFormData.name.trim(),
+            fileName: packageFormData.name.trim(),
+            subject: packageFormData.subject,
+            tingkatKelas: packageFormData.tingkatKelas,
+            description: packageFormData.description,
+          });
+        }
+        if (packageFormData.setActive && onSetActiveExamPackage) {
+          await onSetActiveExamPackage(editingPackage.id);
+        }
+        setStudentSuccessToast(`Berkas "${packageFormData.name}" berhasil diperbarui!`);
+      } else {
+        if (onCreateQuestionPackage) {
+          const newPkg = await onCreateQuestionPackage({
+            name: packageFormData.name.trim(),
+            fileName: packageFormData.name.trim(),
+            subject: packageFormData.subject,
+            tingkatKelas: packageFormData.tingkatKelas,
+            description: packageFormData.description,
+          });
+          setSelectedPackageId(newPkg.id);
+          if (packageFormData.setActive && onSetActiveExamPackage) {
+            await onSetActiveExamPackage(newPkg.id);
+          }
+          setStudentSuccessToast(`Berkas soal baru "${newPkg.name}" berhasil dibuat dan siap diisi!`);
+        }
+      }
+      setShowPackageModal(false);
+      setEditingPackage(null);
+      setTimeout(() => setStudentSuccessToast(null), 5000);
+    } catch (err: any) {
+      console.error("Gagal menyimpan berkas soal:", err);
+      alert("Gagal menyimpan berkas soal: " + (err.message || "Terjadi kesalahan"));
+    }
+  };
+
+  const handleDeleteCurrentPackage = async (pkgId: string) => {
+    const pkg = packagesList.find((p) => p.id === pkgId);
+    if (!pkg) return;
+    const pkgQsCount = questionCountByPackage[pkgId] || 0;
+    if (
+      !window.confirm(
+        `Apakah Anda yakin ingin menghapus berkas "${pkg.name}" beserta ${pkgQsCount} butir soal di dalamnya?\n\nSoal di berkas lain tidak akan terpengaruh.`
+      )
+    ) {
+      return;
+    }
+    if (onDeleteQuestionPackage) {
+      await onDeleteQuestionPackage(pkgId);
+      const remaining = packagesList.filter((p) => p.id !== pkgId);
+      setSelectedPackageId(remaining[0]?.id || "all");
+      setStudentSuccessToast(`Berkas "${pkg.name}" berhasil dihapus.`);
+      setTimeout(() => setStudentSuccessToast(null), 4000);
+    }
+  };
 
   const handleExcelQuestionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
-      const buffer = await file.arrayBuffer();
-      const parsed = await parseExcelQuestions(buffer);
+      let parsed: Omit<Question, "id">[] = [];
+      const fileName = file.name.toLowerCase();
+
+      if (
+        fileName.endsWith(".docx") ||
+        fileName.endsWith(".doc") ||
+        fileName.endsWith(".txt") ||
+        fileName.endsWith(".rtf")
+      ) {
+        const wordResult = await parseWordFile(file);
+        parsed = wordResult.questions;
+      } else {
+        const buffer = await file.arrayBuffer();
+        parsed = await parseExcelQuestions(buffer);
+        if (parsed.length === 0) {
+          const wordResult = await parseWordFile(file);
+          parsed = wordResult.questions;
+        }
+      }
+
       if (parsed.length === 0) {
-        alert("Tidak ada butir soal valid yang ditemukan dalam file Excel tersebut. Silakan gunakan template resmi.");
+        alert(
+          "Tidak ada butir soal valid yang ditemukan dalam berkas tersebut. Pastikan berkas memuat butir soal (Pilihan Ganda, Benar/Salah, Menjodohkan, atau Essay)."
+        );
         return;
       }
-      if (onBulkAddQuestions) {
-        onBulkAddQuestions(parsed);
-      } else {
-        parsed.forEach((q) => onAddQuestion(q));
+
+      let targetPkgId = selectedPackageId !== "all" ? selectedPackageId : "pkg-default";
+      let targetPkgName = selectedPackage?.name || file.name;
+
+      // If viewing "all" or user confirms to create a separate file for this excel
+      if (selectedPackageId === "all" && onCreateQuestionPackage) {
+        const newPkg = await onCreateQuestionPackage({
+          name: file.name,
+          fileName: file.name,
+          subject: config.subject || "Umum",
+          tingkatKelas: "Semua Kelas",
+          description: `Diimpor dari file ${file.name} pada ${new Date().toLocaleDateString("id-ID")}`,
+        });
+        targetPkgId = newPkg.id;
+        targetPkgName = newPkg.name;
+        setSelectedPackageId(targetPkgId);
       }
-      setWordImportSuccessMsg(`Berhasil mengimpor ${parsed.length} butir soal dari dokumen Excel ke Bank Soal!`);
+
+      const tagged = parsed.map((q) => ({
+        ...q,
+        packageId: targetPkgId,
+        packageName: targetPkgName,
+      }));
+
+      if (onBulkAddQuestions) {
+        onBulkAddQuestions(tagged, targetPkgId, targetPkgName);
+      } else {
+        tagged.forEach((q) => onAddQuestion(q, undefined, targetPkgId, targetPkgName));
+      }
+      setWordImportSuccessMsg(`Berhasil mengimpor ${tagged.length} butir soal ke berkas "${targetPkgName}" secara terpisah!`);
       setTimeout(() => setWordImportSuccessMsg(null), 6000);
     } catch (err: any) {
-      console.error("Gagal membaca file Excel:", err);
-      alert("Gagal membaca file Excel: " + (err.message || "Format tidak valid"));
+      console.error("Gagal membaca file soal:", err);
+      alert("Gagal membaca file soal: " + (err.message || "Format tidak valid"));
     } finally {
       if (e.target) e.target.value = "";
     }
   };
 
-  const handleImportFromWord = (newQuestions: Omit<Question, "id">[]) => {
-    if (onBulkAddQuestions) {
-      onBulkAddQuestions(newQuestions);
-    } else {
-      newQuestions.forEach((q) => onAddQuestion(q));
+  const handleImportFromWord = async (
+    newQuestions: Omit<Question, "id">[],
+    meta?: WordQuestionImportMeta
+  ) => {
+    try {
+      let targetPkgId = selectedPackageId !== "all" ? selectedPackageId : "pkg-default";
+      let targetPkgName = selectedPackage?.name || "Berkas Soal";
+
+      if (meta?.isNewPackage && onCreateQuestionPackage) {
+        const createdPkg = await onCreateQuestionPackage({
+          name: meta.packageName || "Naskah Soal Baru.docx",
+          fileName: meta.packageName || "Naskah_Soal.docx",
+          subject: config.subject || "Bahasa Inggris",
+          tingkatKelas: meta.tingkatKelas || "Semua Kelas",
+          description: `Diimpor dari dokumen Word pada ${new Date().toLocaleDateString("id-ID")}`,
+        });
+        targetPkgId = createdPkg.id;
+        targetPkgName = createdPkg.name;
+        setSelectedPackageId(targetPkgId);
+        if (meta.setActive && onSetActiveExamPackage) {
+          await onSetActiveExamPackage(targetPkgId);
+        }
+      } else if (meta?.packageId) {
+        targetPkgId = meta.packageId;
+        const found = packagesList.find((p) => p.id === meta.packageId);
+        if (found) targetPkgName = found.name;
+        setSelectedPackageId(targetPkgId);
+        if (meta?.setActive && onSetActiveExamPackage) {
+          await onSetActiveExamPackage(targetPkgId);
+        }
+      }
+
+      const taggedQuestions = newQuestions.map((q) => ({
+        ...q,
+        packageId: targetPkgId,
+        packageName: targetPkgName,
+        tingkatKelas:
+          q.tingkatKelas && q.tingkatKelas !== "Semua Kelas"
+            ? q.tingkatKelas
+            : meta?.tingkatKelas || "Semua Kelas",
+      }));
+
+      if (onBulkAddQuestions) {
+        onBulkAddQuestions(taggedQuestions, targetPkgId, targetPkgName);
+      } else {
+        taggedQuestions.forEach((q) => onAddQuestion(q, undefined, targetPkgId, targetPkgName));
+      }
+
+      setWordImportSuccessMsg(
+        `Berhasil membuat berkas "${targetPkgName}" dan mengimpor ${taggedQuestions.length} butir soal terpisah (tidak tercampur)!`
+      );
+      setTimeout(() => setWordImportSuccessMsg(null), 7000);
+    } catch (err: any) {
+      console.error("Gagal mengimpor berkas Word:", err);
+      alert("Gagal mengimpor berkas Word: " + (err.message || "Format tidak valid"));
     }
-    setWordImportSuccessMsg(`Berhasil mengimpor ${newQuestions.length} butir soal dari dokumen Word ke Bank Soal!`);
-    setTimeout(() => setWordImportSuccessMsg(null), 6000);
+  };
+
+  const handleQuickPasteSuccess = (
+    newQuestions: Question[],
+    count: number,
+    targetPackageName: string
+  ) => {
+    if (onBulkAddQuestions) {
+      onBulkAddQuestions(newQuestions, newQuestions[0]?.packageId, targetPackageName);
+    } else {
+      newQuestions.forEach((q) => onAddQuestion(q, undefined, q.packageId, targetPackageName));
+    }
+    if (onRefreshAllData) {
+      onRefreshAllData().catch(console.error);
+    }
+    const successMsg = `Berhasil mengimpor ${count} butir soal ke Bank Soal.`;
+    setWordImportSuccessMsg(successMsg);
+    setStudentSuccessToast(successMsg);
+    setTimeout(() => {
+      setWordImportSuccessMsg(null);
+      setStudentSuccessToast(null);
+    }, 6000);
   };
 
   // Filter students (Kelola Siswa Massal)
@@ -3138,6 +3435,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <span>Tambah Soal Baru</span>
                 </button>
 
+                {/* 1a. Quick Paste Plaintext Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowQuickPasteModal(true)}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-lg shadow-cyan-600/25 transition cursor-pointer border border-cyan-400/30"
+                  title="Ekstrak & Simpan Soal dari Plaintext (Word, Excel, PDF)"
+                >
+                  <ClipboardCopy className="w-4 h-4 text-cyan-200" />
+                  <span>📋 Quick Paste Plaintext</span>
+                </button>
+
                 {/* 1b. Ekspor Bank Soal Button (PDF, Word, Excel, JSON) */}
                 <button
                   type="button"
@@ -3208,7 +3516,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <input
                   type="file"
                   ref={excelQuestionFileInputRef}
-                  accept=".xlsx, .xls"
+                  accept=".xlsx, .xls, .csv, .docx, .doc, .txt, .rtf"
                   onChange={handleExcelQuestionUpload}
                   className="hidden"
                 />
@@ -3316,13 +3624,291 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             )}
 
+            {/* PENGELOLA BERKAS & DOKUMEN NASKAH SOAL (SOAL TERPISAH PER FILE) */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shrink-0">
+                    <Folder className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="text-sm font-bold text-white">
+                        Daftar Berkas &amp; Dokumen Naskah Soal ({packagesList.length} Berkas)
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        Terpisah / Tidak Gabung
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Setiap naskah ujian tersimpan dalam berkas tersendiri. Pilih berkas di bawah untuk melihat dan mengelola butir soalnya.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 self-start sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCreatePackageModal()}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-blue-600/25 transition cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4" />
+                    <span>+ Buat Berkas Baru</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Package Cards / File Selector Tabs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {packagesList.map((pkg) => {
+                  const isSelected = selectedPackageId === pkg.id;
+                  const isActiveExam = config.activePackageId === pkg.id;
+                  const count = questionCountByPackage[pkg.id] || 0;
+                  const gradeBadge = getTingkatBadgeConfig(pkg.tingkatKelas);
+
+                  return (
+                    <div
+                      key={pkg.id}
+                      onClick={() => setSelectedPackageId(pkg.id)}
+                      className={`relative p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 group ${
+                        isSelected
+                          ? "bg-slate-900 border-cyan-500 ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-950/40"
+                          : "bg-slate-900/60 hover:bg-slate-900 border-slate-800 hover:border-slate-700"
+                      }`}
+                    >
+                      {/* Top Bar: Icon, Name, and Status */}
+                      <div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                              isActiveExam
+                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                : "bg-blue-600/10 text-blue-400 border border-blue-500/20"
+                            }`}>
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="text-xs font-bold text-white truncate group-hover:text-cyan-300 transition" title={pkg.name}>
+                                {pkg.name}
+                              </h4>
+                              <p className="text-[10px] text-slate-400 truncate">
+                                {pkg.subject || "Mata Pelajaran Umum"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Active Exam Badge */}
+                          {isActiveExam && (
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center space-x-1 shrink-0 animate-pulse"
+                              title="Berkas ini sedang aktif digunakan untuk ujian siswa"
+                            >
+                              <Star className="w-2.5 h-2.5 fill-emerald-400 text-emerald-400" />
+                              <span>Ujian Aktif</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Badges: Question count & Class Level */}
+                        <div className="flex items-center space-x-1.5 mt-2.5 flex-wrap gap-y-1">
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-slate-800 text-slate-200 border border-slate-700">
+                            {count} Butir Soal
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${gradeBadge.badgeClass}`}>
+                            {gradeBadge.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card Footer: Quick Actions */}
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-1 text-[11px]">
+                        {isActiveExam ? (
+                          <span className="text-[10px] font-bold text-emerald-400 flex items-center space-x-1">
+                            <Check className="w-3 h-3" />
+                            <span>Dipakai Siswa</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onSetActiveExamPackage) {
+                                onSetActiveExamPackage(pkg.id);
+                                setStudentSuccessToast(`Naskah "${pkg.name}" sekarang AKTIF untuk ujian siswa!`);
+                                setTimeout(() => setStudentSuccessToast(null), 4000);
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/30 text-[10px] font-bold transition cursor-pointer"
+                            title="Jadikan berkas ini sebagai naskah ujian aktif yang akan dikerjakan siswa"
+                          >
+                            Jadikan Ujian
+                          </button>
+                        )}
+
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEditPackageModal(pkg);
+                            }}
+                            className="p-1 rounded-md text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition"
+                            title="Edit nama / info berkas"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                          {packagesList.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteCurrentPackage(pkg.id);
+                              }}
+                              className="p-1 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                              title="Hapus berkas ini"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Option to show ALL files combined */}
+                <div
+                  onClick={() => setSelectedPackageId("all")}
+                  className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 group ${
+                    selectedPackageId === "all"
+                      ? "bg-slate-900 border-cyan-500 ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-950/40"
+                      : "bg-slate-900/60 hover:bg-slate-900 border-slate-800 hover:border-slate-700"
+                  }`}
+                >
+                  <div className="flex items-start space-x-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 flex items-center justify-center shrink-0">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white group-hover:text-cyan-300 transition">
+                        Semua Berkas (Gabungan)
+                      </h4>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Tampilkan keseluruhan soal dari seluruh berkas
+                      </p>
+                      <div className="mt-2.5">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-slate-800 text-slate-300 border border-slate-700">
+                          {questions.length} Butir Soal Total
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-slate-800/80 text-[10px] text-slate-400 flex items-center justify-between">
+                    <span>Mode Tinjauan Global</span>
+                    <span className="text-cyan-400 font-bold">Pilih &rarr;</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Selected File Details & Actions Banner */}
+              {selectedPackage && (
+                <div className="p-3.5 sm:p-4 rounded-xl bg-cyan-950/30 border border-cyan-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                      <span className="text-slate-400 font-medium">Sedang Menampilkan Berkas:</span>
+                      <span className="font-extrabold text-cyan-200 text-sm flex items-center space-x-1.5">
+                        <FileText className="w-4 h-4 text-cyan-400" />
+                        <span>{selectedPackage.name}</span>
+                      </span>
+                      {config.activePackageId === selectedPackage.id ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>Naskah Ujian Aktif untuk Siswa</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onSetActiveExamPackage) {
+                              onSetActiveExamPackage(selectedPackage.id);
+                              setStudentSuccessToast(`Berkas "${selectedPackage.name}" telah diaktifkan untuk ujian siswa!`);
+                              setTimeout(() => setStudentSuccessToast(null), 4000);
+                            }
+                          }}
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 transition cursor-pointer"
+                        >
+                          Klik untuk Aktifkan Berkas Ini untuk Ujian Siswa
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-300 flex items-center space-x-3 flex-wrap gap-y-1">
+                      <span>Mata Pelajaran: <strong>{selectedPackage.subject || "Umum"}</strong></span>
+                      <span>&bull;</span>
+                      <span>Jenjang: <strong>{selectedPackage.tingkatKelas || "Semua Kelas"}</strong></span>
+                      <span>&bull;</span>
+                      <span>Jumlah: <strong>{filteredBankQuestions.length} butir soal</strong></span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5 flex-wrap gap-y-1 self-start md:self-auto shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingQuestion(null);
+                        setShowQuestionEditor(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center space-x-1 transition shadow-sm cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Tambah Soal</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowWordUploadModal(true)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex items-center space-x-1 transition cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Upload Word</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickPasteModal(true)}
+                      className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center space-x-1 transition cursor-pointer shadow-sm"
+                      title="Quick Paste Plaintext ke berkas ini"
+                    >
+                      <ClipboardCopy className="w-3.5 h-3.5 text-cyan-200" />
+                      <span>Quick Paste</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowExportModal(true)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex items-center space-x-1 transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Ekspor</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditPackageModal(selectedPackage)}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+                      title="Edit Nama / Mata Pelajaran Berkas"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Grade Filter Tabs Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
               <div className="flex items-center space-x-2">
                 <Filter className="w-4 h-4 text-cyan-400 shrink-0" />
-                <span className="text-xs font-bold text-slate-300">Filter Jenjang Soal:</span>
+                <span className="text-xs font-bold text-slate-300">
+                  {selectedPackage ? `Filter Jenjang dalam ${selectedPackage.name}:` : "Filter Jenjang Soal:"}
+                </span>
                 <span className="text-[11px] text-slate-400">
-                  (Menampilkan {filteredBankQuestions.length} dari {questions.length} butir soal)
+                  (Menampilkan {filteredBankQuestions.length} butir soal)
                 </span>
               </div>
 
@@ -3336,7 +3922,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       : "text-slate-400 hover:text-white hover:bg-slate-800"
                   }`}
                 >
-                  <span>Semua (Default)</span>
+                  <span>Semua</span>
                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/20 font-bold">
                     {questionCountsByGrade.semua}
                   </span>
@@ -3392,13 +3978,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             {/* Questions List */}
             <div className="space-y-4">
               {filteredBankQuestions.length === 0 ? (
-                <div className="p-8 text-center bg-slate-950 border border-slate-800 rounded-2xl text-slate-400 space-y-2">
-                  <p className="text-sm font-semibold">
-                    Tidak ada butir soal untuk filter "{questionGradeFilter === "Semua" ? "Semua Soal" : `Kelas ${questionGradeFilter}`}".
+                <div className="p-8 text-center bg-slate-950 border border-slate-800 rounded-2xl text-slate-400 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center mx-auto">
+                    <FolderPlus className="w-6 h-6" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-200">
+                    Belum ada butir soal dalam berkas "{selectedPackage?.name || "ini"}".
                   </p>
-                  <p className="text-xs text-slate-500">
-                    Klik 'Tambah Soal Baru' atau gunakan 'Generate AI' / 'Upload' untuk menambahkan soal pada jenjang kelas ini.
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    Tambahkan butir soal baru khusus untuk berkas ini, atau unggah naskah dari berkas Word (.docx) / Excel (.xlsx). Soal akan tersimpan rapi dan tidak akan tercampur dengan berkas lain.
                   </p>
+                  <div className="flex items-center justify-center space-x-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingQuestion(null);
+                        setShowQuestionEditor(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ Tambah Soal ke Berkas Ini</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowWordUploadModal(true)}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Upload Word</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickPasteModal(true)}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer shadow-md shadow-cyan-600/20"
+                    >
+                      <ClipboardCopy className="w-4 h-4 text-cyan-200" />
+                      <span>📋 Quick Paste Plaintext</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
                 filteredBankQuestions.map((q, idx) => {
@@ -3444,6 +4062,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             {typeLabel}
                           </span>
 
+                          {/* File Package Badge */}
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-800 text-cyan-300 border border-slate-700 flex items-center space-x-1"
+                            title={`Berkas: ${q.packageName || "Berkas Soal"}`}
+                          >
+                            <FileText className="w-2.5 h-2.5 text-cyan-400" />
+                            <span className="max-w-[150px] truncate">{q.packageName || "Berkas Soal"}</span>
+                          </span>
+
                           {/* Target Grade Badge */}
                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${gradeBadge.badgeClass}`}>
                             {gradeBadge.label}
@@ -3478,7 +4105,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center space-x-1.5">
+                      <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                        {/* Move Question to Another Package Selector */}
+                        <div className="flex items-center space-x-1 text-slate-400">
+                          <span className="text-[10px] hidden sm:inline">Pindah Berkas:</span>
+                          <select
+                            value={q.packageId || "pkg-default"}
+                            onChange={(e) => {
+                              const targetId = e.target.value;
+                              const targetPkg = packagesList.find((p) => p.id === targetId);
+                              if (onUpdateQuestion && targetPkg) {
+                                onUpdateQuestion(q.id, {
+                                  packageId: targetPkg.id,
+                                  packageName: targetPkg.name,
+                                });
+                                setStudentSuccessToast(`Soal #${idx + 1} dipindahkan ke berkas "${targetPkg.name}"`);
+                                setTimeout(() => setStudentSuccessToast(null), 4000);
+                              }
+                            }}
+                            className="bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-[10px] text-slate-300 px-2 py-1 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                            title="Pindahkan soal ini ke berkas lain"
+                          >
+                            {packagesList.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                📁 {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
                         {/* Direct Edit Question Button */}
                         <button
                           type="button"
@@ -4234,6 +4889,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {showQuestionEditor && (
         <QuestionEditorModal
           initialQuestion={editingQuestion || undefined}
+          packages={packagesList}
+          defaultPackageId={selectedPackageId !== "all" ? selectedPackageId : packagesList[0]?.id}
           onClose={() => {
             setShowQuestionEditor(false);
             setEditingQuestion(null);
@@ -4243,14 +4900,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             setShowRevisionModal(true);
           }}
           onSave={(saved) => {
+            const targetPkgId =
+              saved.packageId || (selectedPackageId !== "all" ? selectedPackageId : "pkg-default");
+            const targetPkgName =
+              saved.packageName ||
+              packagesList.find((p) => p.id === targetPkgId)?.name ||
+              "Berkas Soal";
+            const preparedSaved = {
+              ...saved,
+              packageId: targetPkgId,
+              packageName: targetPkgName,
+            };
+
             if (editingQuestion && editingQuestion.id) {
               if (onUpdateQuestion) {
-                onUpdateQuestion(editingQuestion.id, saved);
+                onUpdateQuestion(editingQuestion.id, preparedSaved);
               }
               setStudentSuccessToast("Butir soal berhasil diperbarui!");
             } else {
-              onAddQuestion(saved);
-              setStudentSuccessToast("Butir soal baru berhasil ditambahkan ke Bank Soal!");
+              onAddQuestion(preparedSaved, undefined, targetPkgId, targetPkgName);
+              setStudentSuccessToast(
+                `Butir soal baru berhasil ditambahkan ke berkas "${targetPkgName}"!`
+              );
             }
             setTimeout(() => setStudentSuccessToast(null), 5000);
             setShowQuestionEditor(false);
@@ -4259,11 +4930,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         />
       )}
 
-      {/* Export Bank Soal Modal (PDF, Word, Excel, JSON) */}
+      {/* Export Bank Soal Modal (PDF, Word, Excel, JSON) - Export only currently selected file */}
       <ExportQuestionsModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
-        questions={questions}
+        questions={filteredBankQuestions}
         config={config}
       />
 
@@ -4297,7 +4968,159 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <WordQuestionUploadModal
           onClose={() => setShowWordUploadModal(false)}
           onImportQuestions={handleImportFromWord}
+          existingPackages={packagesList}
+          currentSelectedPackageId={selectedPackageId !== "all" ? selectedPackageId : packagesList[0]?.id}
         />
+      )}
+
+      {/* Quick Paste Plaintext Question Modal */}
+      {showQuickPasteModal && (
+        <QuickPastePlaintextModal
+          isOpen={showQuickPasteModal}
+          onClose={() => setShowQuickPasteModal(false)}
+          packages={packagesList}
+          currentPackageId={selectedPackageId !== "all" ? selectedPackageId : packagesList[0]?.id}
+          authorName="AGUSTINUS PATANDA (admin)"
+          onSuccess={handleQuickPasteSuccess}
+          onCreateNewPackage={onCreateQuestionPackage}
+        />
+      )}
+
+      {/* Create / Edit Question Package Modal */}
+      {showPackageModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center">
+                  <FolderPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    {editingPackage ? "Edit Info Berkas Naskah Soal" : "Buat Berkas / File Soal Baru"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Naskah ujian disimpan terpisah per file agar tidak tercampur
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPackageModal(false);
+                  setEditingPackage(null);
+                }}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Nama Berkas / Dokumen Soal <span className="text-rose-400">*</span>:
+                </label>
+                <input
+                  type="text"
+                  value={packageFormData.name}
+                  onChange={(e) => setPackageFormData({ ...packageFormData, name: e.target.value })}
+                  placeholder="Contoh: XII TKA.docx, Penilaian Harian Fisika.docx, Ujian Semester 1"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">
+                    Mata Pelajaran:
+                  </label>
+                  <input
+                    type="text"
+                    value={packageFormData.subject}
+                    onChange={(e) => setPackageFormData({ ...packageFormData, subject: e.target.value })}
+                    placeholder="Contoh: Bahasa Inggris, Matematika"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">
+                    Jenjang Tingkat Kelas:
+                  </label>
+                  <select
+                    value={packageFormData.tingkatKelas}
+                    onChange={(e) =>
+                      setPackageFormData({
+                        ...packageFormData,
+                        tingkatKelas: e.target.value as TingkatKelas,
+                      })
+                    }
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white focus:outline-none focus:border-cyan-500 cursor-pointer"
+                  >
+                    <option value="Semua Kelas">Semua Kelas</option>
+                    <option value="X">Kelas X</option>
+                    <option value="XI">Kelas XI</option>
+                    <option value="XII">Kelas XII</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">
+                  Deskripsi / Catatan Naskah (Opsional):
+                </label>
+                <textarea
+                  value={packageFormData.description}
+                  onChange={(e) =>
+                    setPackageFormData({ ...packageFormData, description: e.target.value })
+                  }
+                  placeholder="Contoh: Naskah soal khusus kelas XII untuk asesmen akhir..."
+                  rows={2}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 text-xs"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="chk-set-active"
+                  checked={packageFormData.setActive}
+                  onChange={(e) =>
+                    setPackageFormData({ ...packageFormData, setActive: e.target.checked })
+                  }
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 bg-slate-900 border-slate-700 cursor-pointer"
+                />
+                <label htmlFor="chk-set-active" className="text-slate-300 cursor-pointer text-xs">
+                  <span className="font-bold text-white">Jadikan naskah ujian aktif sekarang</span>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Siswa yang login akan otomatis menerima soal dari berkas naskah ini.
+                  </p>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPackageModal(false);
+                  setEditingPackage(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePackageModal}
+                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/25 cursor-pointer"
+              >
+                {editingPackage ? "Simpan Perubahan" : "Buat Berkas & Mulai Isi"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* QR Code HD Zoom & Projection Modal */}

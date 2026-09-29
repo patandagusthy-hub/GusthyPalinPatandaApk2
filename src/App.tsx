@@ -42,6 +42,11 @@ export default function App() {
     bulkAddStudents,
     cleanupDuplicateStudents,
     deleteSampleStudents,
+    questionPackages,
+    createQuestionPackage,
+    updateQuestionPackage,
+    deleteQuestionPackage,
+    setActiveExamPackage,
     addQuestion,
     updateQuestion,
     restoreQuestionRevision,
@@ -202,6 +207,11 @@ export default function App() {
             onRestoreQuestionRevision={restoreQuestionRevision}
             onBulkAddQuestions={bulkAddQuestions}
             onDeleteQuestion={deleteQuestion}
+            questionPackages={questionPackages}
+            onCreateQuestionPackage={createQuestionPackage}
+            onUpdateQuestionPackage={updateQuestionPackage}
+            onDeleteQuestionPackage={deleteQuestionPackage}
+            onSetActiveExamPackage={setActiveExamPackage}
             onOpenDuckRace={() => setShowDuckRaceModal(true)}
             onUpdateAdminProfile={updateStaffProfile}
             onUpdateExamConfig={updateExamConfig}

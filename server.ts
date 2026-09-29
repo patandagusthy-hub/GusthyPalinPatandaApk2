@@ -1,17 +1,323 @@
-import express, { Request, Response } from "express";
+import express from "express";
+import type { Request, Response } from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
-import { serverDb } from "./server/db";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
+// ==========================================
+// PERSISTENT DATABASE ENGINE (Self-Contained)
+// Guarantees admin questions, students, and settings are never lost!
+// ==========================================
+const DATA_DIR = path.join(process.cwd(), "data");
+const BACKUPS_DIR = path.join(DATA_DIR, "backups");
+const DB_FILE = path.join(DATA_DIR, "cbt_database.json");
+const CURRENT_SCHEMA_VERSION = 3;
+
+function ensureDirs() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
+}
+
+class ServerDatabase {
+  private cache: any = null;
+
+  constructor() {
+    ensureDirs();
+    this.loadInitial();
+  }
+
+  private loadInitial(): any {
+    try {
+      if (fs.existsSync(DB_FILE)) {
+        const raw = fs.readFileSync(DB_FILE, "utf-8");
+        this.cache = JSON.parse(raw);
+        return this.cache;
+      }
+    } catch (err) {
+      console.error("[ServerDB] Error loading DB_FILE, attempting backup recovery:", err);
+      const backup = this.getLatestBackup();
+      if (backup) {
+        this.cache = backup;
+        this.saveDirect(backup, false);
+        return backup;
+      }
+    }
+
+    const initialDb = {
+      version: CURRENT_SCHEMA_VERSION,
+      lastUpdated: new Date().toISOString(),
+      hasAdminCustomData: false,
+      students: [],
+      questions: [],
+      examConfig: {
+        id: "exam-2026-gpp-01",
+        title: "Ujian CBT Online",
+        durationMinutes: 45,
+        passingScore: 75,
+      },
+      staffUsers: [],
+    };
+    this.cache = initialDb;
+    this.saveDirect(initialDb, true);
+    return initialDb;
+  }
+
+  public getDatabase(): any {
+    if (!this.cache) {
+      return this.loadInitial();
+    }
+    return this.cache;
+  }
+
+  public saveDatabase(
+    incoming: any,
+    label: string = "auto_update"
+  ): { success: boolean; message?: string; db: any } {
+    ensureDirs();
+    const current = this.getDatabase();
+
+    let newQuestions = incoming.questions ?? current.questions;
+    if (current.questions?.length > 0 && Array.isArray(incoming.questions) && incoming.questions.length === 0) {
+      console.warn("[ServerDB] Rejected empty questions update to protect admin data!");
+      newQuestions = current.questions;
+    }
+
+    let newStudents = incoming.students ?? current.students;
+    const isExplicitStudentDelete =
+      label.includes("delete") ||
+      label.includes("sample") ||
+      label.includes("restore") ||
+      label.includes("import");
+
+    if (
+      !isExplicitStudentDelete &&
+      current.students?.length > 0 &&
+      Array.isArray(incoming.students) &&
+      incoming.students.length === 0 &&
+      !incoming.hasAdminCustomData
+    ) {
+      console.warn("[ServerDB] Rejected empty students update to protect admin data!");
+      newStudents = current.students;
+    } else if (Array.isArray(incoming.students)) {
+      newStudents = incoming.students;
+    }
+
+    const updated = {
+      version: CURRENT_SCHEMA_VERSION,
+      lastUpdated: new Date().toISOString(),
+      hasAdminCustomData: true,
+      students: newStudents,
+      questions: newQuestions,
+      questionPackages: incoming.questionPackages ?? current.questionPackages ?? incoming.question_packages ?? current.question_packages ?? [],
+      examConfig: incoming.examConfig
+        ? { ...current.examConfig, ...incoming.examConfig }
+        : current.examConfig,
+      staffUsers: incoming.staffUsers ?? current.staffUsers,
+    };
+
+    const saved = this.saveDirect(updated, true, label);
+    if (saved) {
+      this.cache = updated;
+      return { success: true, db: updated };
+    } else {
+      return { success: false, message: "Gagal menyimpan ke penyimpanan server", db: current };
+    }
+  }
+
+  private saveDirect(db: any, createBackup: boolean = true, label: string = "snapshot"): boolean {
+    try {
+      ensureDirs();
+      const content = JSON.stringify(db, null, 2);
+      const tmpFile = `${DB_FILE}.tmp.${Date.now()}`;
+      fs.writeFileSync(tmpFile, content, "utf-8");
+      fs.renameSync(tmpFile, DB_FILE);
+
+      if (createBackup) {
+        this.createBackupSnapshot(db, label);
+      }
+      return true;
+    } catch (err) {
+      console.error("[ServerDB] Failed to save DB file:", err);
+      return false;
+    }
+  }
+
+  private createBackupSnapshot(db: any, label: string): void {
+    try {
+      ensureDirs();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const safeLabel = label.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const backupName = `backup_${timestamp}_${safeLabel}.json`;
+      const backupPath = path.join(BACKUPS_DIR, backupName);
+      fs.writeFileSync(backupPath, JSON.stringify(db, null, 2), "utf-8");
+
+      const files = fs.readdirSync(BACKUPS_DIR).filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
+      if (files.length > 25) {
+        files.sort().reverse();
+        for (let i = 25; i < files.length; i++) {
+          try {
+            fs.unlinkSync(path.join(BACKUPS_DIR, files[i]));
+          } catch {}
+        }
+      }
+    } catch (err) {
+      console.warn("[ServerDB] Backup creation non-fatal error:", err);
+    }
+  }
+
+  private getLatestBackup(): any | null {
+    try {
+      ensureDirs();
+      const files = fs.readdirSync(BACKUPS_DIR).filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
+      if (files.length === 0) return null;
+      files.sort().reverse();
+      const latest = path.join(BACKUPS_DIR, files[0]);
+      const raw = fs.readFileSync(latest, "utf-8");
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  public listBackups(): any[] {
+    try {
+      ensureDirs();
+      const files = fs.readdirSync(BACKUPS_DIR).filter((f) => f.startsWith("backup_") && f.endsWith(".json"));
+      files.sort().reverse();
+
+      return files.map((filename) => {
+        const fullPath = path.join(BACKUPS_DIR, filename);
+        const stats = fs.statSync(fullPath);
+        let studentsCount = 0;
+        let questionsCount = 0;
+        try {
+          const raw = fs.readFileSync(fullPath, "utf-8");
+          const parsed = JSON.parse(raw);
+          studentsCount = Array.isArray(parsed.students) ? parsed.students.length : 0;
+          questionsCount = Array.isArray(parsed.questions) ? parsed.questions.length : 0;
+        } catch {}
+
+        return {
+          filename,
+          timestamp: stats.mtime.toISOString(),
+          sizeBytes: stats.size,
+          studentsCount,
+          questionsCount,
+        };
+      });
+    } catch (err) {
+      console.error("[ServerDB] Error listing backups:", err);
+      return [];
+    }
+  }
+
+  public restoreBackup(filename: string): { success: boolean; message: string; db?: any } {
+    try {
+      ensureDirs();
+      const safeName = path.basename(filename);
+      const fullPath = path.join(BACKUPS_DIR, safeName);
+      if (!fs.existsSync(fullPath)) {
+        return { success: false, message: "Berkas cadangan tidak ditemukan" };
+      }
+
+      if (this.cache) {
+        this.createBackupSnapshot(this.cache, "pre_restore_safety");
+      }
+
+      const raw = fs.readFileSync(fullPath, "utf-8");
+      const restored = JSON.parse(raw);
+      this.cache = restored;
+      this.saveDirect(restored, false);
+
+      return {
+        success: true,
+        message: `Berhasil memulihkan ${restored.questions?.length || 0} soal dan ${restored.students?.length || 0} siswa dari cadangan!`,
+        db: restored,
+      };
+    } catch (err: any) {
+      return { success: false, message: `Gagal memulihkan cadangan: ${err.message}` };
+    }
+  }
+
+  public importDatabase(jsonString: string): { success: boolean; message: string; db?: any } {
+    try {
+      const parsed = JSON.parse(jsonString);
+      if (!parsed || (!parsed.students && !parsed.questions)) {
+        return { success: false, message: "Format berkas JSON tidak valid untuk database CBT" };
+      }
+
+      if (this.cache) {
+        this.createBackupSnapshot(this.cache, "pre_import_safety");
+      }
+
+      parsed.hasAdminCustomData = true;
+      this.cache = parsed;
+      this.saveDirect(parsed, true, "manual_import");
+      return {
+        success: true,
+        message: `Berhasil mengimpor ${parsed.questions?.length || 0} soal dan ${parsed.students?.length || 0} data siswa!`,
+        db: parsed,
+      };
+    } catch (err: any) {
+      return { success: false, message: `Gagal mengimpor database: ${err.message}` };
+    }
+  }
+
+  public recordStudentViolation(
+    studentId: string,
+    violation: any
+  ) {
+    const current = this.getDatabase();
+    const student = current.students?.find((s: any) => s.id === studentId);
+    const newViolation = {
+      id: violation.id || `viol-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: violation.timestamp || new Date().toLocaleTimeString("id-ID"),
+      type: violation.type,
+      title: violation.title,
+      description: violation.description,
+      snapshot: violation.snapshot,
+    };
+
+    if (student) {
+      const existingLog = Array.isArray(student.violationsLog) ? student.violationsLog : [];
+      student.violationsLog = [newViolation, ...existingLog];
+      student.violationsCount = student.violationsLog.length;
+    }
+
+    current.lastUpdated = new Date().toISOString();
+    this.saveDirect(current, false, "record_violation");
+    this.cache = current;
+    return newViolation;
+  }
+
+  public clearAllViolations(): { success: boolean; message: string } {
+    const current = this.getDatabase();
+    current.students?.forEach((s: any) => {
+      s.violationsCount = 0;
+      s.violationsLog = [];
+    });
+    current.lastUpdated = new Date().toISOString();
+    this.saveDirect(current, true, "clear_violations");
+    this.cache = current;
+    return { success: true, message: "Seluruh catatan log pelanggaran keamanan telah dibersihkan." };
+  }
+}
+
+export const serverDb = new ServerDatabase();
 
 // Lazy Gemini client helper
 let aiClient: GoogleGenAI | null = null;
@@ -60,9 +366,9 @@ app.get("/api/data", (_req: Request, res: Response) => {
 
 // Save complete or partial database changes
 app.post("/api/data", (req: Request, res: Response) => {
-  const { students, questions, examConfig, staffUsers, label } = req.body;
+  const { students, questions, questionPackages, examConfig, staffUsers, label } = req.body;
   const result = serverDb.saveDatabase(
-    { students, questions, examConfig, staffUsers },
+    { students, questions, questionPackages, examConfig, staffUsers },
     label || "admin_action"
   );
   res.json(result);
@@ -689,16 +995,20 @@ Keluarkan HANYA JSON array valid tanpa \`\`\`json:
   }
 });
 
-// Start server with Vite middleware
+// Start server with Vite middleware in dev or static files in production
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), "dist");
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    fs.existsSync(path.join(distPath, "index.html"));
+
+  if (!isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
     app.use(
       express.static(distPath, {
         maxAge: "1y",
@@ -724,4 +1034,12 @@ async function startServer() {
   });
 }
 
-startServer();
+process.on("SIGTERM", () => {
+  console.log("Received SIGTERM, shutting down gracefully");
+  process.exit(0);
+});
+
+startServer().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
