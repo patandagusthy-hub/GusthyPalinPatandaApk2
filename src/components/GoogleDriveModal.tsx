@@ -100,9 +100,9 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
 
-  const submittedStudents = students.filter(
-    (s) => s.examStatus === "submitted" || s.examStatus === "disqualified"
-  );
+  const submittedStudents = students
+    .filter((s) => s.examStatus === "submitted" || s.examStatus === "disqualified")
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
 
   // Initialize Auth state & load resources
   useEffect(() => {

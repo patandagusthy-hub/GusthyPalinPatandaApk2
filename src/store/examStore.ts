@@ -32,6 +32,14 @@ import {
   normalizeClassKey,
   normalizeNameKey,
 } from "../utils/studentDeduplicator";
+import {
+  DATABASE_CLASSES,
+  canonicalizeClassName,
+  deduplicateClasses,
+  isSameClass,
+  sanitizeStudentClasses,
+  sortClassNames,
+} from "../utils/classUtils";
 import { db } from "../firebaseConfig";
 import { enqueueStudentAutoSync } from "../services/googleSheetsService";
 import {
@@ -100,6 +108,23 @@ async function syncToServerDb(payload: {
   }
 }
 
+// Helper: Urutkan seluruh data siswa sesuai abjad nama (A-Z) secara konsisten di seluruh aplikasi
+export function sortStudentsAlphabetically(list: Student[]): Student[] {
+  return [...list].sort((a, b) => {
+    const nameA = (a?.name || "").trim();
+    const nameB = (b?.name || "").trim();
+    const nameCmp = nameA.localeCompare(nameB, "id", { sensitivity: "base", numeric: true });
+    if (nameCmp !== 0) return nameCmp;
+
+    const classA = (a?.className || "").trim();
+    const classB = (b?.className || "").trim();
+    const classCmp = classA.localeCompare(classB, "id", { numeric: true });
+    if (classCmp !== 0) return classCmp;
+
+    return (a?.nisn || "").localeCompare(b?.nisn || "", "id", { numeric: true });
+  });
+}
+
 export function useExamStore() {
   const [firebaseStatus, setFirebaseStatus] = useState<"connected" | "connecting" | "error">("connecting");
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
@@ -109,24 +134,25 @@ export function useExamStore() {
   // 1. Staff (Admins & Teachers)
   const [staffUsers, setStaffUsers] = useState<TeacherOrAdmin[]>(INITIAL_ADMINS);
 
-  // 2. Students - Firestore Collection 'students' (Initialized with complete master dataset to ensure no class is empty)
+  // 2. Students - Firestore Collection 'students' (Guarantees user student records are preserved permanently across all updates, berurutan sesuai abjad A-Z)
   const [students, setStudents] = useState<Student[]>(() => {
     try {
       const raw = safeStorage.getItem("GPP_EXAM_STUDENTS_V1");
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Merge with INITIAL_STUDENTS (321 students) to ensure classes with 0 students are immediately populated
-          const pool = [...parsed, ...INITIAL_STUDENTS];
-          const { unique } = deduplicateStudents(pool);
+          // Strictly preserve saved students without overwriting or appending mock initial data
+          const sanitizedPool = sanitizeStudentClasses(parsed);
+          const { unique } = deduplicateStudents(sanitizedPool);
           const { students: cleanStudents } = ensureUniqueStudentTokens(unique);
-          return cleanStudents;
+          return sortStudentsAlphabetically(cleanStudents);
         }
       }
     } catch {}
-    const { unique } = deduplicateStudents(INITIAL_STUDENTS);
+    const sanitizedInitial = sanitizeStudentClasses(INITIAL_STUDENTS);
+    const { unique } = deduplicateStudents(sanitizedInitial);
     const { students: cleanStudents } = ensureUniqueStudentTokens(unique);
-    return cleanStudents;
+    return sortStudentsAlphabetically(cleanStudents);
   });
 
   // 3. Questions - Firestore Collection 'questions'
@@ -137,20 +163,17 @@ export function useExamStore() {
 
   // 5. Custom Registered Classes - Firestore Document 'settings/classes' (Preserved permanently)
   const [customClasses, setCustomClasses] = useState<string[]>(() => {
-    const defaultClasses = Array.from(
-      new Set(INITIAL_STUDENTS.map((s) => (s?.className || "").trim()).filter(Boolean))
-    ).sort();
-
+    let savedList: string[] = [];
     try {
       const saved = safeStorage.getItem("gpp_registered_classes");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return Array.from(new Set([...defaultClasses, ...parsed])).sort();
+          savedList = parsed;
         }
       }
     } catch {}
-    return defaultClasses;
+    return deduplicateClasses([...DATABASE_CLASSES, ...savedList]);
   });
 
   // Current session user (cached locally for tab refresh continuity)
@@ -194,8 +217,9 @@ export function useExamStore() {
   // Keep registered classes synced to safeStorage
   useEffect(() => {
     if (customClasses && customClasses.length > 0) {
+      const clean = deduplicateClasses(customClasses);
       try {
-        safeStorage.setItem("gpp_registered_classes", JSON.stringify(customClasses));
+        safeStorage.setItem("gpp_registered_classes", JSON.stringify(clean));
       } catch {}
     }
   }, [customClasses]);
@@ -248,9 +272,10 @@ export function useExamStore() {
           await commitBatchOperations(sOps);
 
           // Seed Classes list in Firestore
-          const initialClassList = Array.from(
-            new Set(cleanInitial.map((s) => (s?.className || "").trim()).filter(Boolean))
-          ).sort();
+          const initialClassList = deduplicateClasses([
+            ...DATABASE_CLASSES,
+            ...cleanInitial.map((s) => s?.className),
+          ]);
           await setDoc(doc(db, "settings", "classes"), { list: initialClassList }, { merge: true });
 
           // Seed Config if not present
@@ -302,12 +327,11 @@ export function useExamStore() {
             }
 
             // Sync registered classes
-            const allAvailableClasses = Array.from(
-              new Set([
-                ...serverStudents.map((s) => (s?.className || "").trim()).filter(Boolean),
-                ...existingStudentsSnap.docs.map((d) => (d.data()?.className || "").trim()).filter(Boolean),
-              ])
-            ).sort();
+            const allAvailableClasses = deduplicateClasses([
+              ...DATABASE_CLASSES,
+              ...serverStudents.map((s) => s?.className),
+              ...existingStudentsSnap.docs.map((d) => d.data()?.className),
+            ]);
             if (allAvailableClasses.length > 0) {
               await setDoc(doc(db, "settings", "classes"), { list: allAvailableClasses }, { merge: true });
               if (isMounted) {
@@ -338,39 +362,30 @@ export function useExamStore() {
 
             if (fetchedStudents.length > 0) {
               // Deduplicate fetched students to guarantee uniqueness across all classes
-              const { unique } = deduplicateStudents(fetchedStudents);
+              const sanitizedFetched = sanitizeStudentClasses(fetchedStudents);
+              const { unique } = deduplicateStudents(sanitizedFetched);
 
               // Guarantee 100% unique barcode tokens across all students (no duplicate tokens)
               const { students: cleanStudents, fixedCount } = ensureUniqueStudentTokens(unique);
 
-              // Sort by class and name
+              // Sort strictly alphabetically by student name (A-Z)
               cleanStudents.sort((a, b) => {
-                const cCmp = (a.className || "").localeCompare(b.className || "");
-                if (cCmp !== 0) return cCmp;
-                return (a.name || "").localeCompare(b.name || "");
+                const nameCmp = (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true });
+                if (nameCmp !== 0) return nameCmp;
+                return (a.className || "").localeCompare(b.className || "", "id", { numeric: true });
               });
 
-              setStudents((prev) => {
-                // Merge fetched students with previously loaded students so classes are NEVER blank or lost
-                const pool = [...prev, ...cleanStudents];
-                const { unique: mergedUnique } = deduplicateStudents(pool);
-                const { students: mergedClean } = ensureUniqueStudentTokens(mergedUnique);
-                mergedClean.sort((a, b) => {
-                  const cCmp = (a.className || "").localeCompare(b.className || "");
-                  if (cCmp !== 0) return cCmp;
-                  return (a.name || "").localeCompare(b.name || "");
-                });
-                safeStorage.setItem("GPP_EXAM_STUDENTS_V1", JSON.stringify(mergedClean));
-                storageEngine.saveStudentsAsync(mergedClean).catch(() => {});
-                return mergedClean;
-              });
+              setStudents(cleanStudents);
+              safeStorage.setItem("GPP_EXAM_STUDENTS_V1", JSON.stringify(cleanStudents));
+              storageEngine.saveStudentsAsync(cleanStudents).catch(() => {});
 
               // Ensure all available classes from students are registered in customClasses
-              const derivedClasses = Array.from(
-                new Set(cleanStudents.map((s) => (s?.className || "").trim()).filter(Boolean))
-              ).sort();
+              const derivedClasses = deduplicateClasses([
+                ...DATABASE_CLASSES,
+                ...cleanStudents.map((s) => s?.className),
+              ]);
               if (derivedClasses.length > 0) {
-                setCustomClasses((prev) => Array.from(new Set([...prev, ...derivedClasses])).sort());
+                setCustomClasses((prev) => deduplicateClasses([...prev, ...derivedClasses]));
               }
 
               // Auto-Sync Real-Time to Google Drive Spreadsheet if changes contain completed exam
@@ -498,7 +513,7 @@ export function useExamStore() {
             if (docSnap.exists()) {
               const data = docSnap.data();
               if (Array.isArray(data?.list)) {
-                setCustomClasses(data.list);
+                setCustomClasses(deduplicateClasses([...DATABASE_CLASSES, ...data.list]));
               }
             }
           },
@@ -1320,8 +1335,8 @@ export function useExamStore() {
   // =========================================================================
   const addClasses = useCallback(
     async (newClasses: string[], openStudentModalForClass?: string) => {
-      const trimmed = (newClasses || []).map((c) => (c || "").trim()).filter(Boolean);
-      const updated = Array.from(new Set([...customClasses, ...trimmed])).sort();
+      const canonicalNew = (newClasses || []).map((c) => canonicalizeClassName(c)).filter(Boolean);
+      const updated = deduplicateClasses([...customClasses, ...canonicalNew]);
       setCustomClasses(updated);
 
       try {
@@ -1336,12 +1351,11 @@ export function useExamStore() {
 
   const deleteClass = useCallback(
     async (className: string, deleteStudentsInClass = true) => {
-      const trimmedTarget = (className || "").trim();
-      const normalized = trimmedTarget.toLowerCase();
+      const canonicalTarget = canonicalizeClassName(className);
 
       // 1. Remove from customClasses
       const updatedCustom = (customClasses || []).filter(
-        (c) => (c || "").trim().toLowerCase() !== normalized
+        (c) => !isSameClass(c, canonicalTarget)
       );
       setCustomClasses(updatedCustom);
 
@@ -1349,7 +1363,7 @@ export function useExamStore() {
       let studentIdsToDelete: string[] = [];
       if (deleteStudentsInClass) {
         studentIdsToDelete = students
-          .filter((s) => (s?.className || "").trim().toLowerCase() === normalized)
+          .filter((s) => isSameClass(s?.className, canonicalTarget))
           .map((s) => s.id);
 
         if (studentIdsToDelete.length > 0) {
@@ -1374,10 +1388,10 @@ export function useExamStore() {
         // Remove from activeClasses in examConfig if present
         if (
           examConfig.activeClasses &&
-          examConfig.activeClasses.some((c) => (c || "").trim().toLowerCase() === normalized)
+          examConfig.activeClasses.some((c) => isSameClass(c, canonicalTarget))
         ) {
           const updatedActive = examConfig.activeClasses.filter(
-            (c) => (c || "").trim().toLowerCase() !== normalized
+            (c) => !isSameClass(c, canonicalTarget)
           );
           const updatedConfig = { ...examConfig, activeClasses: updatedActive };
           setExamConfig(updatedConfig);
@@ -1394,11 +1408,10 @@ export function useExamStore() {
 
   const emptyClass = useCallback(
     async (className: string) => {
-      const trimmedTarget = (className || "").trim();
-      const normalized = trimmedTarget.toLowerCase();
+      const canonicalTarget = canonicalizeClassName(className);
 
       const studentIdsToDelete = students
-        .filter((s) => (s?.className || "").trim().toLowerCase() === normalized)
+        .filter((s) => isSameClass(s?.className, canonicalTarget))
         .map((s) => s.id);
 
       if (studentIdsToDelete.length > 0) {
@@ -1418,8 +1431,8 @@ export function useExamStore() {
       }
 
       // Ensure class name remains registered
-      if (!(customClasses || []).some((c) => (c || "").trim().toLowerCase() === normalized)) {
-        const updated = [...customClasses, trimmedTarget].sort();
+      if (!(customClasses || []).some((c) => isSameClass(c, canonicalTarget))) {
+        const updated = deduplicateClasses([...customClasses, canonicalTarget]);
         setCustomClasses(updated);
         await setDoc(doc(db, "settings", "classes"), { list: updated }, { merge: true });
       }
@@ -1444,6 +1457,9 @@ export function useExamStore() {
       nextList = prev.map((s) => {
         if (s.id === id) {
           const updated = { ...s, ...updates };
+          if (updates.className) {
+            updated.className = canonicalizeClassName(updates.className);
+          }
           // If className or NISN changed and token was not explicitly overridden, keep token unique & synchronized
           if (
             (updates.className || updates.nisn) &&
@@ -1479,7 +1495,7 @@ export function useExamStore() {
   const addStudent = useCallback(async (newStudent: Omit<Student, "id">) => {
     const rawNisn = newStudent.nisn ? String(newStudent.nisn).trim() : "";
     const validNisn = normalizeNisn(rawNisn);
-    const cleanCls = (newStudent.className || "").trim() || "XII RPL 1";
+    const cleanCls = canonicalizeClassName(newStudent.className) || "XII RPL 1";
     const cleanName = (newStudent.name || "").trim();
     const clsKey = normalizeClassKey(cleanCls);
     const nameKey = normalizeNameKey(cleanName);
@@ -1544,7 +1560,7 @@ export function useExamStore() {
 
     let nextList: Student[] = [];
     setStudents((prev) => {
-      nextList = [studentWithId, ...prev];
+      nextList = sortStudentsAlphabetically([studentWithId, ...prev]);
       safeStorage.setItem("GPP_EXAM_STUDENTS_V1", JSON.stringify(nextList));
       storageEngine.saveStudentsAsync(nextList).catch(() => {});
       return nextList;
@@ -1610,14 +1626,16 @@ export function useExamStore() {
 
   const bulkAddStudents = useCallback(async (newStudents: Student[]) => {
     if (!newStudents || newStudents.length === 0) return;
-    const sanitizedStudents = newStudents.map((s) => ({
-      ...s,
-      isSample: s.isSample === true ? true : false,
-    }));
+    const sanitizedStudents = sanitizeStudentClasses(
+      newStudents.map((s) => ({
+        ...s,
+        isSample: s.isSample === true ? true : false,
+      }))
+    );
 
     // Automatically register any new classes
-    const incomingClasses = Array.from(
-      new Set(sanitizedStudents.map((s) => (s?.className || "").trim()).filter(Boolean))
+    const incomingClasses = deduplicateClasses(
+      sanitizedStudents.map((s) => s?.className)
     );
     if (incomingClasses.length > 0) {
       addClasses(incomingClasses);
@@ -1629,7 +1647,7 @@ export function useExamStore() {
     setStudents((prev) => {
       const { mergedStudents } = mergeImportedStudents(prev, sanitizedStudents);
       const { students: uniqueTokenStudents } = ensureUniqueStudentTokens(mergedStudents);
-      finalMergedList = uniqueTokenStudents;
+      finalMergedList = sortStudentsAlphabetically(uniqueTokenStudents);
 
       // Identify the exact students from the incoming batch within the merged array
       const incomingIds = new Set(sanitizedStudents.map((s) => s.id));
@@ -1675,6 +1693,9 @@ export function useExamStore() {
           const u = updateMap.get(s.id);
           if (!u) return s;
           const merged = { ...s, ...u };
+          if (u.className) {
+            merged.className = canonicalizeClassName(u.className);
+          }
           // If className or nisn changed without explicit token, synchronize barcode token
           if ((u.className || u.nisn) && !u.startBarcodeToken) {
             merged.startBarcodeToken = generateUniqueStudentToken(
@@ -1727,8 +1748,9 @@ export function useExamStore() {
       return { totalCleaned: 0, remainingCount: unique.length };
     }
 
-    setStudents(unique);
-    safeStorage.setItem("GPP_EXAM_STUDENTS_V1", JSON.stringify(unique));
+    const sortedUnique = sortStudentsAlphabetically(unique);
+    setStudents(sortedUnique);
+    safeStorage.setItem("GPP_EXAM_STUDENTS_V1", JSON.stringify(sortedUnique));
 
     try {
       const ops = duplicates.map((d) => ({
@@ -2121,11 +2143,12 @@ export function useExamStore() {
   );
 
   const restoreInitialStudents = useCallback(async () => {
-    setStudents(INITIAL_STUDENTS);
+    const sortedInitial = sortStudentsAlphabetically(INITIAL_STUDENTS);
+    setStudents(sortedInitial);
 
     try {
       setIsSyncing(true);
-      const ops = INITIAL_STUDENTS.map((st) => ({
+      const ops = sortedInitial.map((st) => ({
         type: "set" as const,
         ref: doc(db, "students", st.id),
         data: cleanForFirestore(st),
@@ -2183,8 +2206,9 @@ export function useExamStore() {
         setIsSyncing(true);
 
         if (Array.isArray(parsed.students) && parsed.students.length > 0) {
-          setStudents(parsed.students);
-          const ops = parsed.students.map((st: Student) => ({
+          const sortedStudents = sortStudentsAlphabetically(parsed.students);
+          setStudents(sortedStudents);
+          const ops = sortedStudents.map((st: Student) => ({
             type: "set" as const,
             ref: doc(db, "students", st.id),
             data: cleanForFirestore(st),
@@ -2252,8 +2276,9 @@ export function useExamStore() {
         if (result.success && result.db) {
           const imported = result.db;
           if (Array.isArray(imported.students)) {
-            setStudents(imported.students);
-            const ops = imported.students.map((st: Student) => ({
+            const sortedStudents = sortStudentsAlphabetically(imported.students);
+            setStudents(sortedStudents);
+            const ops = sortedStudents.map((st: Student) => ({
               type: "set" as const,
               ref: doc(db, "students", st.id),
               data: cleanForFirestore(st),
@@ -2360,10 +2385,11 @@ export function useExamStore() {
       // 5. Deduplicate and ensure unique barcode tokens
       const { unique } = deduplicateStudents(combinedPool);
       const { students: cleanStudents } = ensureUniqueStudentTokens(unique);
+      // Sort strictly alphabetically by student name (A-Z)
       cleanStudents.sort((a, b) => {
-        const cCmp = (a.className || "").localeCompare(b.className || "");
-        if (cCmp !== 0) return cCmp;
-        return (a.name || "").localeCompare(b.name || "");
+        const nameCmp = (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true });
+        if (nameCmp !== 0) return nameCmp;
+        return (a.className || "").localeCompare(b.className || "", "id", { numeric: true });
       });
 
       // 6. Push missing students to Firestore so Cloud is fully up to date
@@ -2385,9 +2411,10 @@ export function useExamStore() {
       });
 
       // 8. Update classes
-      const allClassNames = Array.from(
-        new Set(cleanStudents.map((s) => (s?.className || "").trim()).filter(Boolean))
-      ).sort();
+      const allClassNames = deduplicateClasses([
+        ...DATABASE_CLASSES,
+        ...cleanStudents.map((s) => s?.className),
+      ]);
       setCustomClasses(allClassNames);
       try {
         safeStorage.setItem("gpp_registered_classes", JSON.stringify(allClassNames));

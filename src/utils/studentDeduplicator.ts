@@ -1,4 +1,7 @@
 import { Student } from "../types";
+import { canonicalizeClassName, normalizeClassKey } from "./classUtils";
+
+export { canonicalizeClassName, normalizeClassKey };
 
 /**
  * Checks if a NISN is empty or a dummy placeholder.
@@ -22,19 +25,6 @@ export function isPlaceholderNisn(nisn?: string): boolean {
   return false;
 }
 
-/**
- * Normalizes class name for comparison:
- * e.g. "Kelas X A", "X-A", "X.A", " X A " -> "x a"
- */
-export function normalizeClassKey(cls?: string): string {
-  if (!cls) return "";
-  return cls
-    .toLowerCase()
-    .replace(/^(kelas|kls)\s+/i, "")
-    .replace(/[-._]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /**
  * Normalizes student name for comparison:
@@ -126,14 +116,15 @@ export function deduplicateStudents(students: Student[]): DeduplicateResult {
     const sId = student.id ? student.id.trim() : "";
     const nisn = normalizeNisn(student.nisn);
     const rawUsername = (student.username || "").toLowerCase().trim();
-    const classKey = normalizeClassKey(student.className);
+    const canonicalClass = canonicalizeClassName(student.className);
+    const classKey = normalizeClassKey(canonicalClass);
     const nameKey = normalizeNameKey(student.name);
     const classAndNameKey = classKey && nameKey ? `${classKey}:::${nameKey}` : "";
     const classAndNisnKey = classKey && nisn ? `${classKey}:::${nisn}` : "";
     const classAndUsernameKey =
       classKey && rawUsername && !isGenericUsername(rawUsername)
         ? `${classKey}:::${rawUsername}`
-        : "";
+      : "";
 
     // Check if duplicate exists (STRICT: only same doc ID or strictly same class!)
     let existingIdx: number | undefined = undefined;
@@ -156,27 +147,47 @@ export function deduplicateStudents(students: Student[]): DeduplicateResult {
 
       if (currentProgress > existingProgress) {
         // Current has more progress or better status
+        const maxViolationsCount = Math.max(existing.violationsCount || 0, student.violationsCount || 0);
+        const bestViolationsLog =
+          (student.violationsLog && student.violationsLog.length > (existing.violationsLog?.length || 0))
+            ? student.violationsLog
+            : existing.violationsLog || [];
+        const mergedAnswers = { ...(existing.answers || {}), ...(student.answers || {}) };
+
         const merged: Student = {
           ...student,
-          answers:
-            student.answers && Object.keys(student.answers).length > 0
-              ? student.answers
-              : existing.answers || {},
+          className: canonicalClass || canonicalizeClassName(existing.className),
+          answers: mergedAnswers,
           startBarcodeToken: student.startBarcodeToken || existing.startBarcodeToken,
           avatarColor: student.avatarColor || existing.avatarColor,
+          violationsCount: maxViolationsCount,
+          violationsLog: bestViolationsLog,
+          loginCount: Math.max(existing.loginCount || 0, student.loginCount || 0),
+          isLocked: existing.isLocked || student.isLocked,
+          isSample: existing.isSample === true || student.isSample === true,
         };
         uniqueList[existingIdx] = merged;
         duplicatesList.push(existing);
       } else {
         // Existing is preferred; merge missing fields from student into existing
+        const maxViolationsCount = Math.max(existing.violationsCount || 0, student.violationsCount || 0);
+        const bestViolationsLog =
+          (student.violationsLog && student.violationsLog.length > (existing.violationsLog?.length || 0))
+            ? student.violationsLog
+            : existing.violationsLog || [];
+        const mergedAnswers = { ...(student.answers || {}), ...(existing.answers || {}) };
+
         const merged: Student = {
           ...existing,
-          answers:
-            existing.answers && Object.keys(existing.answers).length > 0
-              ? existing.answers
-              : student.answers || {},
+          className: canonicalizeClassName(existing.className) || canonicalClass,
+          answers: mergedAnswers,
           startBarcodeToken: existing.startBarcodeToken || student.startBarcodeToken,
           avatarColor: existing.avatarColor || student.avatarColor,
+          violationsCount: maxViolationsCount,
+          violationsLog: bestViolationsLog,
+          loginCount: Math.max(existing.loginCount || 0, student.loginCount || 0),
+          isLocked: existing.isLocked || student.isLocked,
+          isSample: existing.isSample === true || student.isSample === true,
         };
         uniqueList[existingIdx] = merged;
         duplicatesList.push(student);
@@ -184,7 +195,10 @@ export function deduplicateStudents(students: Student[]): DeduplicateResult {
     } else {
       // New unique student
       const newIdx = uniqueList.length;
-      uniqueList.push({ ...student });
+      uniqueList.push({
+        ...student,
+        className: canonicalClass || (student.className || "").trim(),
+      });
 
       if (sId) idIndex.set(sId, newIdx);
       if (classAndNisnKey) classNisnIndex.set(classAndNisnKey, newIdx);
@@ -221,7 +235,8 @@ export function mergeImportedStudents(
     const sId = incoming.id ? incoming.id.trim() : "";
     const nisn = normalizeNisn(incoming.nisn);
     const username = (incoming.username || "").toLowerCase().trim();
-    const classKey = normalizeClassKey(incoming.className);
+    const canonicalClass = canonicalizeClassName(incoming.className);
+    const classKey = normalizeClassKey(canonicalClass);
     const nameKey = normalizeNameKey(incoming.name);
     const classAndNameKey = classKey && nameKey ? `${classKey}:::${nameKey}` : "";
 
@@ -251,7 +266,7 @@ export function mergeImportedStudents(
       result[matchIdx] = {
         ...existing,
         name: incoming.name || existing.name,
-        className: incoming.className || existing.className,
+        className: canonicalClass || canonicalizeClassName(existing.className),
         nisn: incoming.nisn || existing.nisn,
         username: incoming.username || existing.username,
         password: incoming.password || existing.password,
@@ -260,7 +275,10 @@ export function mergeImportedStudents(
       };
       updatedCount++;
     } else {
-      result.unshift(incoming);
+      result.unshift({
+        ...incoming,
+        className: canonicalClass || (incoming.className || "").trim(),
+      });
       newCount++;
     }
   });

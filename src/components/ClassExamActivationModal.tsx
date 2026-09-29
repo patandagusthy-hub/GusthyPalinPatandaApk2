@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { ExamConfig, Student } from "../types";
+import { deduplicateClasses, isSameClass, canonicalizeClassName } from "../utils/classUtils";
 
 interface ClassExamActivationModalProps {
   isOpen: boolean;
@@ -23,17 +24,20 @@ interface ClassExamActivationModalProps {
   onSaveConfig: (updates: Partial<ExamConfig>) => void;
 }
 
-const normalizeClassName = (cls?: string) =>
-  (cls || "").trim().replace(/\s+/g, " ").toLowerCase();
-
 export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> = ({
   isOpen,
   onClose,
   examConfig,
-  availableClasses,
+  availableClasses: rawAvailableClasses,
   students,
   onSaveConfig,
 }) => {
+  // Deduplicate and canonicalize available classes
+  const availableClasses = useMemo(
+    () => deduplicateClasses(rawAvailableClasses),
+    [rawAvailableClasses]
+  );
+
   // Mode: all or selective
   const [allClassesActive, setAllClassesActive] = useState<boolean>(
     examConfig.allClassesActive ?? true
@@ -42,10 +46,10 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
   // Set of selected active classes
   const [selectedClasses, setSelectedClasses] = useState<string[]>(() => {
     if (examConfig.allClassesActive === false) {
-      return Array.isArray(examConfig.activeClasses) ? [...examConfig.activeClasses] : [];
+      return Array.isArray(examConfig.activeClasses) ? deduplicateClasses(examConfig.activeClasses) : [];
     }
     if (examConfig.activeClasses && examConfig.activeClasses.length > 0) {
-      return [...examConfig.activeClasses];
+      return deduplicateClasses(examConfig.activeClasses);
     }
     return [...availableClasses];
   });
@@ -60,12 +64,12 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
       setAllClassesActive(isAll);
       if (!isAll) {
         setSelectedClasses(
-          Array.isArray(examConfig.activeClasses) ? [...examConfig.activeClasses] : []
+          Array.isArray(examConfig.activeClasses) ? deduplicateClasses(examConfig.activeClasses) : []
         );
       } else {
         setSelectedClasses(
           examConfig.activeClasses && examConfig.activeClasses.length > 0
-            ? [...examConfig.activeClasses]
+            ? deduplicateClasses(examConfig.activeClasses)
             : [...availableClasses]
         );
       }
@@ -80,8 +84,7 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
     });
     students.forEach((s) => {
       if (s.className) {
-        const norm = normalizeClassName(s.className);
-        const match = availableClasses.find((ac) => normalizeClassName(ac) === norm);
+        const match = availableClasses.find((ac) => isSameClass(ac, s.className));
         if (match) {
           counts[match] = (counts[match] || 0) + 1;
         } else {
@@ -116,25 +119,24 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
 
   const isClassActive = (cls: string) => {
     if (allClassesActive) return true;
-    const norm = normalizeClassName(cls);
-    return selectedClasses.some((sc) => normalizeClassName(sc) === norm);
+    return selectedClasses.some((sc) => isSameClass(sc, cls));
   };
 
   // Toggle single class with instant auto-save
   const handleToggleClass = (cls: string) => {
-    const norm = normalizeClassName(cls);
+    const canonical = canonicalizeClassName(cls);
     let nextAll = allClassesActive;
     let nextSelected: string[];
 
     if (allClassesActive) {
       nextAll = false;
-      nextSelected = availableClasses.filter((c) => normalizeClassName(c) !== norm);
+      nextSelected = availableClasses.filter((c) => !isSameClass(c, canonical));
     } else {
-      const alreadyIn = selectedClasses.some((c) => normalizeClassName(c) === norm);
+      const alreadyIn = selectedClasses.some((c) => isSameClass(c, canonical));
       if (alreadyIn) {
-        nextSelected = selectedClasses.filter((c) => normalizeClassName(c) !== norm);
+        nextSelected = selectedClasses.filter((c) => !isSameClass(c, canonical));
       } else {
-        nextSelected = [...selectedClasses, cls];
+        nextSelected = deduplicateClasses([...selectedClasses, canonical]);
       }
     }
 
@@ -174,9 +176,8 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
       (c) => c.toUpperCase().startsWith(grade) || c.toUpperCase().includes(` ${grade} `)
     );
     const baseList = allClassesActive ? availableClasses : selectedClasses;
-    const existing = new Set(baseList.map((c) => normalizeClassName(c)));
-    const toAdd = targetClasses.filter((c) => !existing.has(normalizeClassName(c)));
-    const nextSelected = [...baseList, ...toAdd];
+    const toAdd = targetClasses.filter((c) => !baseList.some((b) => isSameClass(b, c)));
+    const nextSelected = deduplicateClasses([...baseList, ...toAdd]);
 
     setAllClassesActive(false);
     setSelectedClasses(nextSelected);
@@ -212,7 +213,7 @@ export const ClassExamActivationModal: React.FC<ClassExamActivationModalProps> =
   const totalActiveClasses = allClassesActive
     ? availableClasses.length
     : selectedClasses.filter((c) =>
-        availableClasses.some((ac) => normalizeClassName(ac) === normalizeClassName(c))
+        availableClasses.some((ac) => isSameClass(ac, c))
       ).length;
 
   const totalActiveStudents = availableClasses.reduce((acc, cls) => {

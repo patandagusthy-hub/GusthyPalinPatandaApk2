@@ -7,6 +7,7 @@ import {
   INITIAL_QUESTIONS,
   INITIAL_EXAM_CONFIG,
 } from "../src/data/initialData";
+import { canonicalizeClassName } from "../src/utils/classUtils";
 
 export interface PersistentDatabase {
   version: number;
@@ -55,7 +56,7 @@ function migrateSchema(data: any): PersistentDatabase {
         username: s.username || `siswa_${idx + 1}`,
         password: s.password || "siswa123",
         name: s.name || `Siswa ${idx + 1}`,
-        className: s.className || "XII",
+        className: canonicalizeClassName(s.className) || s.className || "XII RPL 1",
         role: "siswa" as const,
         loginCount: typeof s.loginCount === "number" ? s.loginCount : 0,
         isLocked: Boolean(s.isLocked),

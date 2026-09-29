@@ -4,7 +4,10 @@ import { Student, ExamConfig } from "../types";
 
 export function exportResultsToExcel(students: Student[], examTitle: string, config?: ExamConfig) {
   const kkm = config?.passingScore ?? 75;
-  const data = students.map((s, idx) => ({
+  const sortedStudents = [...students].sort((a, b) =>
+    (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true })
+  );
+  const data = sortedStudents.map((s, idx) => ({
     "No": idx + 1,
     "NISN": s.nisn,
     "Nama Lengkap": s.name,
@@ -114,7 +117,11 @@ export function exportResultsToPDF(students: Student[], examTitle: string, confi
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
 
-  students.forEach((s, idx) => {
+  const sortedStudents = [...students].sort((a, b) =>
+    (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true })
+  );
+
+  sortedStudents.forEach((s, idx) => {
     if (startY > 185) {
       doc.addPage();
       startY = 20;

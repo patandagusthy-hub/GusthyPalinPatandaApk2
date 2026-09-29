@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   GraduationCap,
   X,
@@ -12,6 +12,12 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { Student } from "../types";
+import {
+  DATABASE_CLASSES,
+  deduplicateClasses,
+  isSameClass,
+  canonicalizeClassName,
+} from "../utils/classUtils";
 
 interface AddClassModalProps {
   isOpen: boolean;
@@ -41,19 +47,20 @@ export const AddClassModal: React.FC<AddClassModalProps> = ({
     studentCount: number;
   } | null>(null);
 
-  if (!isOpen) return null;
-
   // All currently active classes from students + customClasses
-  const allClasses = Array.from(
-    new Set([
-      ...existingStudents.map((s) => (s?.className || "").trim()).filter(Boolean),
-      ...(customClasses || []).map((c) => (c || "").trim()).filter(Boolean),
-    ])
-  ).sort();
+  const allClasses = useMemo(() => {
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...(existingStudents || []).map((s) => s?.className),
+      ...(customClasses || []),
+    ]);
+  }, [existingStudents, customClasses]);
+
+  if (!isOpen) return null;
 
   const handleConfirmDeleteClass = () => {
     if (!classToDelete) return;
-    const target = classToDelete.name;
+    const target = canonicalizeClassName(classToDelete.name);
     const hasStudents = classToDelete.studentCount > 0;
 
     if (onDeleteClass) {
@@ -65,19 +72,19 @@ export const AddClassModal: React.FC<AddClassModalProps> = ({
   };
 
   const handleSaveSingle = (andOpenStudents = false) => {
-    const trimmed = singleClassName.trim();
-    if (!trimmed) {
+    const canonical = canonicalizeClassName(singleClassName);
+    if (!canonical) {
       setErrorMsg("Harap masukkan nama kelas terlebih dahulu (contoh: X TKJ 1, XII MIPA 2).");
       return;
     }
 
-    if (allClasses.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
-      setErrorMsg(`Kelas "${trimmed}" sudah terdaftar sebelumnya.`);
+    if (allClasses.some((c) => isSameClass(c, canonical))) {
+      setErrorMsg(`Kelas "${canonical}" sudah terdaftar sebelumnya.`);
       return;
     }
 
     setErrorMsg(null);
-    onAddClasses([trimmed], andOpenStudents ? trimmed : undefined);
+    onAddClasses([canonical], andOpenStudents ? canonical : undefined);
     setSingleClassName("");
     if (!andOpenStudents) {
       onClose();
@@ -87,16 +94,18 @@ export const AddClassModal: React.FC<AddClassModalProps> = ({
   const handleSaveBulk = () => {
     const lines = bulkInput
       .split(/[\n,]+/)
-      .map((l) => l.trim())
+      .map((l) => canonicalizeClassName(l))
       .filter((l) => l.length > 0);
 
-    if (lines.length === 0) {
+    const canonicalList = deduplicateClasses(lines);
+
+    if (canonicalList.length === 0) {
       setErrorMsg("Harap masukkan minimal satu nama kelas.");
       return;
     }
 
-    const uniqueNew = lines.filter(
-      (c) => !allClasses.some((ac) => ac.toLowerCase() === c.toLowerCase())
+    const uniqueNew = canonicalList.filter(
+      (c) => !allClasses.some((ac) => isSameClass(ac, c))
     );
 
     if (uniqueNew.length === 0) {
@@ -319,7 +328,7 @@ export const AddClassModal: React.FC<AddClassModalProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-1">
                   {allClasses.map((cls) => {
                     const studentCount = existingStudents.filter(
-                      (s) => (s?.className || "").trim().toLowerCase() === (cls || "").trim().toLowerCase()
+                      (s) => isSameClass(s?.className, cls)
                     ).length;
                     return (
                       <div

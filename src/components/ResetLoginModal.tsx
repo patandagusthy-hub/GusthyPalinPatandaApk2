@@ -14,6 +14,7 @@ import {
   Filter,
 } from "lucide-react";
 import { Student, ExamConfig, isExamClassActive } from "../types";
+import { DATABASE_CLASSES, deduplicateClasses, isSameClass } from "../utils/classUtils";
 
 interface ResetLoginModalProps {
   isOpen: boolean;
@@ -56,11 +57,10 @@ export const ResetLoginModal: React.FC<ResetLoginModalProps> = ({
 
   // Unique classes list
   const classesList = useMemo(() => {
-    const set = new Set<string>();
-    students.forEach((s) => {
-      if (s.className) set.add(s.className);
-    });
-    return Array.from(set).sort();
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...students.map((s) => s.className),
+    ]);
   }, [students]);
 
   // Students in active exam class
@@ -80,13 +80,13 @@ export const ResetLoginModal: React.FC<ResetLoginModalProps> = ({
       const matchClass =
         selectedClass === "all" ||
         (selectedClass === "active_only" && config && isExamClassActive(config, s.className)) ||
-        s.className === selectedClass;
+        isSameClass(s.className, selectedClass);
 
       const isLockedOrLoggedIn = s.isLocked || s.loginCount > 0;
       const matchLocked = !filterLockedOnly || isLockedOrLoggedIn;
 
       return matchSearch && matchClass && matchLocked;
-    });
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
   }, [students, searchQuery, selectedClass, filterLockedOnly, config]);
 
   const toggleSelectOne = (id: string) => {
@@ -262,7 +262,7 @@ export const ResetLoginModal: React.FC<ResetLoginModalProps> = ({
                   )}
                   {classesList.map((c) => (
                     <option key={c} value={c}>
-                      Kelas {c} ({students.filter((s) => s.className === c).length})
+                      Kelas {c} ({students.filter((s) => isSameClass(s.className, c)).length})
                     </option>
                   ))}
                 </select>

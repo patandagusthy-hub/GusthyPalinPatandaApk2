@@ -31,8 +31,6 @@ export const AIRubricTuningModal: React.FC<AIRubricTuningModalProps> = ({
   onSaveConfig,
   onSave,
 }) => {
-  if (isOpen === false) return null;
-
   const rawConfig: any = config;
   const currentRubric: AIRubricConfig =
     rawConfig && typeof rawConfig === "object" && "strictnessMode" in rawConfig
@@ -147,6 +145,8 @@ export const AIRubricTuningModal: React.FC<AIRubricTuningModalProps> = ({
       setIsTesting(false);
     }
   };
+
+  if (isOpen === false) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 sm:p-5 backdrop-blur-sm overflow-y-auto">

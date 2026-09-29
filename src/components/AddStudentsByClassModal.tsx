@@ -21,6 +21,12 @@ import {
 } from "lucide-react";
 import { Student } from "../types";
 import { generateUniqueStudentToken } from "../utils/barcodeUtils";
+import {
+  DATABASE_CLASSES,
+  deduplicateClasses,
+  isSameClass,
+  canonicalizeClassName,
+} from "../utils/classUtils";
 
 interface AddStudentsByClassModalProps {
   isOpen: boolean;
@@ -51,11 +57,11 @@ export const AddStudentsByClassModal: React.FC<AddStudentsByClassModalProps> = (
 }) => {
   // Existing unique classes
   const existingClasses = useMemo(() => {
-    const set = new Set([
-      ...existingStudents.map((s) => (s?.className || "").trim()).filter(Boolean),
-      ...(customClasses || []).map((c) => (c || "").trim()).filter(Boolean),
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...existingStudents.map((s) => s?.className),
+      ...(customClasses || []),
     ]);
-    return Array.from(set).sort();
   }, [existingStudents, customClasses]);
 
   // Class Selection state
@@ -63,18 +69,19 @@ export const AddStudentsByClassModal: React.FC<AddStudentsByClassModalProps> = (
     existingClasses.length > 0 ? "existing" : "new"
   );
   const [selectedClass, setSelectedClass] = useState<string>(
-    initialSelectedClass || existingClasses[0] || "X RPL 1"
+    canonicalizeClassName(initialSelectedClass) || existingClasses[0] || "XII RPL 1"
   );
   const [customClassName, setCustomClassName] = useState<string>("");
 
   React.useEffect(() => {
     if (initialSelectedClass) {
       setClassMode("existing");
-      setSelectedClass(initialSelectedClass);
+      setSelectedClass(canonicalizeClassName(initialSelectedClass));
     }
   }, [initialSelectedClass]);
 
-  const targetClass = (classMode === "existing" ? (selectedClass || "") : (customClassName || "")).trim();
+  const rawTarget = classMode === "existing" ? selectedClass : customClassName;
+  const targetClass = canonicalizeClassName(rawTarget) || (rawTarget || "").trim();
 
   // Input Method tab
   const [inputTab, setInputTab] = useState<"paste" | "manual" | "batch">("paste");

@@ -823,7 +823,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
                         st.className.toLowerCase().includes(q)
                       );
                     })
-                    .slice(0, 6)
+                    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }))
+                    .slice(0, 8)
                     .map((st) => (
                       <button
                         key={st.id}

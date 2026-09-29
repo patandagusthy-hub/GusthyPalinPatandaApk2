@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Student } from "../types";
 import { generateUniqueStudentToken } from "../utils/barcodeUtils";
+import { canonicalizeClassName } from "../utils/classUtils";
 
 interface BulkEditStudentsModalProps {
   isOpen: boolean;
@@ -80,17 +81,19 @@ export const BulkEditStudentsModal: React.FC<BulkEditStudentsModalProps> = ({
 
   // Students included based on scope
   const targetStudents = useMemo(() => {
+    let list: Student[] = [];
     if (scope === "selected" && selectedStudentIds.length > 0) {
       const idSet = new Set(selectedStudentIds);
-      return students.filter((s) => idSet.has(s.id));
-    }
-    if (scope === "class" && currentFilteredClass && currentFilteredClass !== "ALL") {
+      list = students.filter((s) => idSet.has(s.id));
+    } else if (scope === "class" && currentFilteredClass && currentFilteredClass !== "ALL") {
       const normalizedClass = (currentFilteredClass || "").trim().toLowerCase();
-      return students.filter(
+      list = students.filter(
         (s) => (s.className || "").trim().toLowerCase() === normalizedClass
       );
+    } else {
+      list = students;
     }
-    return students;
+    return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
   }, [students, scope, selectedStudentIds, currentFilteredClass]);
 
   // Working drafts of students being edited
@@ -554,7 +557,7 @@ export const BulkEditStudentsModal: React.FC<BulkEditStudentsModalProps> = ({
     const updates = modifiedExistingDraftList.map((d) => ({
       id: d.id,
       name: (d.name || "").trim(),
-      className: (d.className || "").trim(),
+      className: canonicalizeClassName(d.className) || (d.className || "").trim(),
       nisn: (d.nisn || "").trim(),
       username: (d.username || "").trim(),
       startBarcodeToken: d.tokenPreview,
@@ -565,7 +568,7 @@ export const BulkEditStudentsModal: React.FC<BulkEditStudentsModalProps> = ({
       const cleanUser = (d.username || "").trim();
       return {
         name: (d.name || "").trim(),
-        className: (d.className || "").trim(),
+        className: canonicalizeClassName(d.className) || (d.className || "").trim(),
         nisn: cleanNisn,
         username: cleanUser || cleanNisn,
         password: cleanNisn.slice(-6) || "123456",

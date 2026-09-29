@@ -51,6 +51,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import { TeacherOrAdmin, ExamConfig, BackupFileInfo, Student, isExamClassActive } from "../types";
+import { DATABASE_CLASSES, deduplicateClasses, isSameClass } from "../utils/classUtils";
 import { ThemeToggle } from "./ThemeToggle";
 import { HelpdeskSupport } from "./HelpdeskSupport";
 import { ResetLoginModal } from "./ResetLoginModal";
@@ -165,11 +166,11 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
   // Class Exam Activation State
   const computedClassesList = useMemo(() => {
-    if (availableClasses && availableClasses.length > 0) return availableClasses;
-    if (students && students.length > 0) {
-      return Array.from(new Set(students.map((s) => s.className).filter(Boolean))).sort();
-    }
-    return ["XII RPL 1", "XII RPL 2", "XII TKJ 1"];
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...(availableClasses || []),
+      ...(students || []).map((s) => s.className),
+    ]);
   }, [availableClasses, students]);
 
   const [allClassesActive, setAllClassesActive] = useState<boolean>(

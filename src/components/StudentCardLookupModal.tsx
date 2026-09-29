@@ -18,6 +18,7 @@ import {
   Filter,
 } from "lucide-react";
 import { Student } from "../types";
+import { DATABASE_CLASSES, deduplicateClasses, isSameClass } from "../utils/classUtils";
 import { generateQRCode, getStudentQrPayload } from "../utils/barcodeUtils";
 
 interface StudentCardLookupModalProps {
@@ -47,18 +48,17 @@ export const StudentCardLookupModal: React.FC<StudentCardLookupModalProps> = ({
 
   // Extract unique classes
   const classOptions = useMemo(() => {
-    const set = new Set<string>();
-    students.forEach((s) => {
-      if (s.className && s.className.trim()) set.add(s.className.trim());
-    });
-    return Array.from(set).sort();
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...students.map((s) => s.className),
+    ]);
   }, [students]);
 
   // Filter students based on query and class
   const filteredStudents = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return students.filter((s) => {
-      if (selectedClass !== "ALL" && s.className !== selectedClass) {
+      if (selectedClass !== "ALL" && !isSameClass(s.className, selectedClass)) {
         return false;
       }
       if (!q) return true;
@@ -69,7 +69,7 @@ export const StudentCardLookupModal: React.FC<StudentCardLookupModalProps> = ({
         (s.startBarcodeToken && s.startBarcodeToken.toLowerCase().includes(q)) ||
         (s.username && s.username.toLowerCase().includes(q))
       );
-    });
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
   }, [students, searchQuery, selectedClass]);
 
   // Select first student if only one matches or pick default

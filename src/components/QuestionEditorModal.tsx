@@ -43,8 +43,6 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
   onSave,
   onOpenRevisionHistory,
 }) => {
-  if (isOpen === false) return null;
-
   const targetQuestion = question || initialQuestion;
   const isEditing = !!targetQuestion?.id;
 
@@ -212,6 +210,8 @@ export const QuestionEditorModal: React.FC<QuestionEditorModalProps> = ({
     mediaCaption,
     audioPlayLimit,
   };
+
+  if (isOpen === false) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-3 sm:p-5 backdrop-blur-sm overflow-y-auto">

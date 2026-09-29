@@ -349,9 +349,9 @@ export async function syncAllSubmittedStudents(
   const token = getGoogleAccessToken();
   if (!token) throw new Error("Tidak ada token otorisasi Google");
 
-  const submitted = students.filter(
-    (s) => s.examStatus === "submitted" || s.examStatus === "disqualified"
-  );
+  const submitted = students
+    .filter((s) => s.examStatus === "submitted" || s.examStatus === "disqualified")
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
   if (submitted.length === 0) {
     const { url } = await getOrCreateExamSpreadsheet(examTitle);
     return { totalSynced: 0, spreadsheetUrl: url };

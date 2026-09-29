@@ -46,6 +46,11 @@ import {
   VolumeX,
   Maximize2,
   X,
+  Database,
+  Play,
+  Pause,
+  Clock,
+  Radio,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Student, Question, ExamConfig, TeacherOrAdmin, isSampleStudent, isExamClassActive } from "../types";
@@ -56,6 +61,7 @@ import { WordQuestionUploadModal } from "./WordQuestionUploadModal";
 import { downloadWordTemplate } from "../utils/wordQuestionParser";
 import { downloadExcelQuestionTemplate, parseExcelQuestions } from "../utils/excelQuestionParser";
 import { deduplicateStudents } from "../utils/studentDeduplicator";
+import { DATABASE_CLASSES, canonicalizeClassName, deduplicateClasses, isSameClass } from "../utils/classUtils";
 import { QuestionEditorModal } from "./QuestionEditorModal";
 import { ExportQuestionsModal } from "./ExportQuestionsModal";
 import { QuestionRevisionHistoryModal } from "./QuestionRevisionHistoryModal";
@@ -72,6 +78,7 @@ import { BulkEditStudentsModal } from "./BulkEditStudentsModal";
 import { ItemAnalysisView } from "./ItemAnalysisView";
 import { AIRubricTuningModal } from "./AIRubricTuningModal";
 import { GoogleDriveModal } from "./GoogleDriveModal";
+import { MasterStudentManager } from "./MasterStudentManager";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 interface AdminDashboardProps {
@@ -166,7 +173,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRefreshAllData,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    "students" | "results" | "questions" | "barcodes" | "duckrace" | "violations" | "settings" | "item_analysis"
+    "students" | "master_students" | "results" | "questions" | "barcodes" | "duckrace" | "violations" | "settings" | "item_analysis"
   >("students");
 
   const [showRubricTuningModal, setShowRubricTuningModal] = useState(false);
@@ -278,11 +285,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   } | null>(null);
 
   const availableClasses = useMemo(() => {
-    const set = new Set([
-      ...students.map((s) => (s?.className || "").trim()).filter(Boolean),
-      ...(customClasses || []).map((c) => (c || "").trim()).filter(Boolean),
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...students.map((s) => s?.className),
+      ...(customClasses || []),
     ]);
-    return Array.from(set).sort();
   }, [students, customClasses]);
 
   // Jika filter kelas terpilih dinonaktifkan dari ujian saat showOnlyActiveExam aktif, kembalikan ke "ALL"
@@ -298,10 +305,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [showOnlyActiveExam, config, studentClassFilter]);
 
   const handleAddClasses = (newClasses: string[], openStudentModalForClass?: string) => {
+    const canonicalNew = (newClasses || []).map((c) => canonicalizeClassName(c)).filter(Boolean);
     if (onAddClassesProp) {
-      onAddClassesProp(newClasses, openStudentModalForClass);
+      onAddClassesProp(canonicalNew, openStudentModalForClass ? canonicalizeClassName(openStudentModalForClass) : undefined);
     } else {
-      const updated = Array.from(new Set([...customClasses, ...newClasses]));
+      const updated = deduplicateClasses([...customClasses, ...canonicalNew]);
       setInternalCustomClasses(updated);
       try {
         localStorage.setItem("gpp_registered_classes", JSON.stringify(updated));
@@ -309,27 +317,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         console.error(e);
       }
     }
-    setStudentSuccessToast(`Berhasil mendaftarkan ${newClasses.length} kelas baru (${newClasses.join(", ")}) ke Firebase Firestore!`);
+    setStudentSuccessToast(`Berhasil mendaftarkan ${canonicalNew.length} kelas baru (${canonicalNew.join(", ")}) ke Firebase Firestore!`);
     setTimeout(() => setStudentSuccessToast(null), 6000);
 
     if (openStudentModalForClass) {
       setShowAddClassModal(false);
-      setSelectedClassForNewStudents(openStudentModalForClass);
+      setSelectedClassForNewStudents(canonicalizeClassName(openStudentModalForClass));
       setShowAddByClassModal(true);
     }
   };
 
   const handleDeleteClass = (className: string, deleteStudentsInClass = true) => {
-    const trimmedTarget = (className || "").trim();
-    const normalized = trimmedTarget.toLowerCase();
+    const canonicalTarget = canonicalizeClassName(className);
 
     if (onDeleteClassProp) {
-      onDeleteClassProp(className, deleteStudentsInClass);
+      onDeleteClassProp(canonicalTarget, deleteStudentsInClass);
     } else {
       // 1. Delete students in this class if requested
       if (deleteStudentsInClass) {
         const studentIdsToDelete = students
-          .filter((s) => (s?.className || "").trim().toLowerCase() === normalized)
+          .filter((s) => isSameClass(s?.className, canonicalTarget))
           .map((s) => s.id);
         if (studentIdsToDelete.length > 0) {
           onBulkDeleteStudents(studentIdsToDelete);
@@ -338,7 +345,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       // 2. Remove from customClasses list
       const updatedCustom = (customClasses || []).filter(
-        (c) => (c || "").trim().toLowerCase() !== normalized
+        (c) => !isSameClass(c, canonicalTarget)
       );
       setInternalCustomClasses(updatedCustom);
       try {
@@ -351,29 +358,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     // 3. Remove from config.activeClasses if present
     if (
       config.activeClasses &&
-      config.activeClasses.some((c) => (c || "").trim().toLowerCase() === normalized)
+      config.activeClasses.some((c) => isSameClass(c, canonicalTarget))
     ) {
       onUpdateExamConfig({
         ...config,
         activeClasses: config.activeClasses.filter(
-          (c) => (c || "").trim().toLowerCase() !== normalized
+          (c) => !isSameClass(c, canonicalTarget)
         ),
       });
     }
 
     // 4. Reset filters if currently viewing this class
-    if ((studentClassFilter || "").trim().toLowerCase() === normalized) {
+    if (isSameClass(studentClassFilter, canonicalTarget)) {
       setStudentClassFilter("ALL");
     }
-    if ((barcodeClassFilter || "").trim().toLowerCase() === normalized) {
+    if (isSameClass(barcodeClassFilter, canonicalTarget)) {
       setBarcodeClassFilter("ALL");
     }
-    if ((resultsClassFilter || "").trim().toLowerCase() === normalized) {
+    if (isSameClass(resultsClassFilter, canonicalTarget)) {
       setResultsClassFilter("ALL");
     }
 
     setStudentSuccessToast(
-      `Kelas "${trimmedTarget}" ${
+      `Kelas "${canonicalTarget}" ${
         deleteStudentsInClass ? "beserta seluruh siswanya" : ""
       } berhasil dihapus dari Firebase Firestore.`
     );
@@ -381,14 +388,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleEmptyClass = (className: string) => {
-    const trimmedTarget = (className || "").trim();
-    const normalized = trimmedTarget.toLowerCase();
+    const canonicalTarget = canonicalizeClassName(className);
 
     if (onEmptyClassProp) {
-      onEmptyClassProp(className);
+      onEmptyClassProp(canonicalTarget);
     } else {
       const studentIdsToDelete = students
-        .filter((s) => (s?.className || "").trim().toLowerCase() === normalized)
+        .filter((s) => isSameClass(s?.className, canonicalTarget))
         .map((s) => s.id);
 
       if (studentIdsToDelete.length > 0) {
@@ -396,8 +402,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       }
 
       // Keep class in customClasses so the class name remains available for fresh enrollment
-      if (!(customClasses || []).some((c) => (c || "").trim().toLowerCase() === normalized)) {
-        const updated = [...customClasses, trimmedTarget];
+      if (!(customClasses || []).some((c) => isSameClass(c, canonicalTarget))) {
+        const updated = deduplicateClasses([...customClasses, canonicalTarget]);
         setInternalCustomClasses(updated);
         try {
           localStorage.setItem("gpp_registered_classes", JSON.stringify(updated));
@@ -408,7 +414,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     setStudentSuccessToast(
-      `Seluruh siswa kelas "${trimmedTarget}" berhasil dikosongkan dari database cloud Firebase.`
+      `Seluruh siswa kelas "${canonicalTarget}" berhasil dikosongkan dari database cloud Firebase.`
     );
     setTimeout(() => setStudentSuccessToast(null), 5000);
   };
@@ -417,35 +423,60 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     handleDeleteClass(className, false);
   };
 
-  // Komputasi siswa yang aktif ujian berdasarkan config.activeClasses
-  const activeExamStudents = useMemo(() => {
-    return students.filter((s) => isExamClassActive(config, s.className));
-  }, [students, config]);
+  // Real students list (guaranteed non-sample)
+  const realStudents = useMemo(() => {
+    return students.filter((s) => !isSampleStudent(s));
+  }, [students]);
 
-  const inactiveExamStudentsCount = students.length - activeExamStudents.length;
+  // Detect whether an exam is ongoing/in progress
+  const isExamOngoing = useMemo(() => {
+    return realStudents.some((s) => s.examStatus === "in_progress" || s.examStatus === "submitted");
+  }, [realStudents]);
+
+  // Hide sample data during exam or live monitoring (Default: true)
+  const [hideSampleData, setHideSampleData] = useState<boolean>(true);
+
+  // Active pool of students for exam dashboard (excludes sample students during exam)
+  const activeExamPool = useMemo(() => {
+    if (hideSampleData || isExamOngoing) {
+      return realStudents;
+    }
+    return students;
+  }, [hideSampleData, isExamOngoing, realStudents, students]);
+
+  // Set of sample student IDs for fast exclusion
+  const sampleStudentIds = useMemo(() => {
+    return new Set(students.filter(isSampleStudent).map((s) => s.id));
+  }, [students]);
+
+  // Komputasi siswa yang aktif ujian berdasarkan config.activeClasses (khusus peserta riil saat ujian)
+  const activeExamStudents = useMemo(() => {
+    return activeExamPool.filter((s) => isExamClassActive(config, s.className));
+  }, [activeExamPool, config]);
+
+  const inactiveExamStudentsCount = activeExamPool.length - activeExamStudents.length;
 
   const filteredBarcodeStudents = useMemo(() => {
     const term = (barcodeSearchTerm || "").trim().toLowerCase();
     const filterClass = (barcodeClassFilter || "").trim().toLowerCase();
 
-    return students.filter((s) => {
+    return activeExamPool.filter((s) => {
       if (showOnlyActiveExam && !isExamClassActive(config, s.className)) {
         return false;
       }
       const sName = (s.name || "").toLowerCase();
       const sNisn = s.nisn || "";
       const sToken = (s.startBarcodeToken || "").toLowerCase();
-      const sClass = (s?.className || "").trim().toLowerCase();
 
       const matchesSearch =
         !term ||
         sName.includes(term) ||
         sNisn.includes(term) ||
         sToken.includes(term);
-      const matchesClass = filterClass === "all" || sClass === filterClass;
+      const matchesClass = filterClass === "all" || isSameClass(s.className, filterClass);
       return matchesSearch && matchesClass;
-    });
-  }, [students, barcodeSearchTerm, barcodeClassFilter, config, showOnlyActiveExam]);
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
+  }, [activeExamPool, barcodeSearchTerm, barcodeClassFilter, config, showOnlyActiveExam]);
 
   const totalBarcodePages = Math.ceil(filteredBarcodeStudents.length / barcodePageSize) || 1;
   const paginatedBarcodeStudents = filteredBarcodeStudents.slice(
@@ -532,7 +563,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const term = (searchTerm || "").trim().toLowerCase();
     const filterClass = (studentClassFilter || "").trim().replace(/\s+/g, " ").toLowerCase();
 
-    return students.filter((s) => {
+    return activeExamPool.filter((s) => {
       // Sesuai permintaan: jangan tampilkan siswa yang non aktif ujian, hanya tampilkan yang kelas/siswa yang diaktifkan
       if (showOnlyActiveExam && !isExamClassActive(config, s.className)) {
         return false;
@@ -550,25 +581,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         sUsername.includes(term) ||
         sClass.includes(term);
 
-      const matchesClass = filterClass === "all" || sClass === filterClass;
+      const matchesClass = filterClass === "all" || isSameClass(s.className, studentClassFilter);
       return matchesSearch && matchesClass;
-    });
-  }, [students, searchTerm, studentClassFilter, config, showOnlyActiveExam]);
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
+  }, [activeExamPool, searchTerm, studentClassFilter, config, showOnlyActiveExam]);
 
-  // Filter results
+  // Filter results (Rekap Nilai & Export) - strictly uses activeExamPool, sorted alphabetically A-Z
   const filteredResultsStudents = useMemo(() => {
-    let list = students;
+    let list = activeExamPool;
     if (showOnlyActiveExam) {
       list = list.filter((s) => isExamClassActive(config, s.className));
     }
-    if ((resultsClassFilter || "").toUpperCase() === "ALL") return list;
-    const filterClass = (resultsClassFilter || "").trim().toLowerCase();
-    return list.filter(
-      (s) => (s?.className || "").trim().toLowerCase() === filterClass
-    );
-  }, [students, resultsClassFilter, config, showOnlyActiveExam]);
+    if ((resultsClassFilter || "").toUpperCase() !== "ALL") {
+      list = list.filter((s) => isSameClass(s?.className, resultsClassFilter));
+    }
+    return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
+  }, [activeExamPool, resultsClassFilter, config, showOnlyActiveExam]);
 
   const sampleStudentsCount = students.filter(isSampleStudent).length;
+
+  // Real-Time Live Exam Progress Metrics (Strictly Real Students during exam)
+  const liveExamMetrics = useMemo(() => {
+    const total = activeExamPool.length;
+    const inProgress = activeExamPool.filter((s) => s.examStatus === "in_progress");
+    const submitted = activeExamPool.filter((s) => s.examStatus === "submitted");
+    const notStarted = activeExamPool.filter((s) => s.examStatus === "not_started");
+    const disqualified = activeExamPool.filter((s) => s.examStatus === "disqualified");
+    const passed = submitted.filter((s) => (s.totalScore ?? 0) >= config.passingScore);
+    const avgScore = submitted.length > 0
+      ? Math.round(submitted.reduce((acc, s) => acc + (s.totalScore ?? 0), 0) / submitted.length)
+      : 0;
+
+    return {
+      total,
+      inProgressCount: inProgress.length,
+      submittedCount: submitted.length,
+      notStartedCount: notStarted.length,
+      disqualifiedCount: disqualified.length,
+      passedCount: passed.length,
+      avgScore,
+      participatingRealCount: inProgress.length + submitted.length,
+    };
+  }, [activeExamPool, config.passingScore]);
 
   const duplicateStudentsCount = useMemo(() => {
     const { duplicatesCount } = deduplicateStudents(students);
@@ -654,7 +708,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!cleanName) {
       return;
     }
-    const targetClass = (formData.className || "").trim() || "XII RPL 1";
+    const targetClass = canonicalizeClassName(formData.className) || "XII RPL 1";
     const cleanNisn = formData.nisn ? String(formData.nisn).trim() : "";
     let cleanUsername = formData.username ? String(formData.username).trim() : "";
     if (!cleanUsername) {
@@ -702,7 +756,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setTimeout(() => setStudentSuccessToast(null), 5000);
 
     // If targetClass is not in availableClasses, register it
-    const isClassKnown = availableClasses.some((c) => (c || "").trim().toLowerCase() === targetClass.toLowerCase());
+    const isClassKnown = availableClasses.some((c) => isSameClass(c, targetClass));
     if (!isClassKnown) {
       handleAddClasses([targetClass]);
     }
@@ -884,11 +938,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // =========================================================================
   // REAL-TIME SECURITY AUDIT VIOLATIONS MONITORING (SSE + BroadcastChannel + Polling)
   // =========================================================================
+  const isSampleViolation = useCallback((v: any) => {
+    if (!v) return false;
+    if (v.studentId && sampleStudentIds.has(v.studentId)) return true;
+    if (v.studentId && (v.studentId.startsWith("std-sim-") || v.studentId.startsWith("sim-"))) return true;
+    return false;
+  }, [sampleStudentIds]);
+
   const initialViolations = useMemo(() => {
-    return students.flatMap((s) =>
-      (s.violationsLog || []).map((v) => ({ ...v, studentName: s.name, className: s.className, nisn: s.nisn }))
+    return activeExamPool.flatMap((s) =>
+      (s.violationsLog || []).map((v) => ({
+        ...v,
+        studentName: s.name,
+        className: s.className,
+        nisn: s.nisn,
+        studentId: s.id,
+      }))
     );
-  }, [students]);
+  }, [activeExamPool]);
 
   const [liveViolations, setLiveViolations] = useState<Array<any>>([]);
   const [violationSearchTerm, setViolationSearchTerm] = useState("");
@@ -905,6 +972,71 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   } | null>(null);
   const [newViolationToast, setNewViolationToast] = useState<string | null>(null);
   const [isClearingViolations, setIsClearingViolations] = useState(false);
+
+  // Auto-Refresh Real-Time Engine (Processes, Results, Violations)
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [refreshIntervalSec, setRefreshIntervalSec] = useState<number>(3);
+  const [countdown, setCountdown] = useState<number>(3);
+  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string>(() => new Date().toLocaleTimeString("id-ID"));
+
+  const handleSetRefreshInterval = (sec: number) => {
+    setRefreshIntervalSec(sec);
+    setCountdown(sec);
+  };
+
+  const triggerAutoRefresh = useCallback(async (fullSync: boolean = false) => {
+    setIsAutoRefreshing(true);
+    try {
+      if (fullSync && onRefreshAllData) {
+        await onRefreshAllData();
+      }
+      // Poll violations
+      try {
+        const res = await fetch("/api/violations");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.violations)) {
+            setLiveViolations((prev) => {
+              const map = new Map(prev.map((v) => [v.id, v]));
+              let hasNew = false;
+              data.violations.forEach((v: any) => {
+                if (isSampleViolation(v)) return;
+                if (!map.has(v.id)) {
+                  map.set(v.id, v);
+                  hasNew = true;
+                }
+              });
+              if (!hasNew) return prev;
+              return Array.from(map.values()).sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
+            });
+          }
+        }
+      } catch {}
+      setLastRefreshedAt(new Date().toLocaleTimeString("id-ID"));
+    } catch (err) {
+      console.warn("[AutoRefresh] Notice:", err);
+    } finally {
+      setIsAutoRefreshing(false);
+    }
+  }, [onRefreshAllData, isSampleViolation]);
+
+  // Periodic Auto-Refresh Timer
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          triggerAutoRefresh(false);
+          return refreshIntervalSec;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [autoRefreshEnabled, refreshIntervalSec, triggerAutoRefresh]);
 
   // Synthesized Web Audio chime for proctors
   const playProctorChime = useCallback(() => {
@@ -933,6 +1065,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const map = new Map(prev.map((v) => [v.id, v]));
       let hasChanges = false;
       initialViolations.forEach((v) => {
+        if (isSampleViolation(v)) return;
         if (!map.has(v.id)) {
           map.set(v.id, v);
           hasChanges = true;
@@ -941,7 +1074,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (!hasChanges && prev.length > 0) return prev;
       return Array.from(map.values()).sort((a, b) => (b.timestamp > a.timestamp ? 1 : -1));
     });
-  }, [initialViolations]);
+  }, [initialViolations, isSampleViolation]);
 
   // Real-Time Listeners: SSE stream + BroadcastChannel + Periodic poll fallback
   useEffect(() => {
@@ -952,6 +1085,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         try {
           const data = JSON.parse(event.data);
           if (data.type === "NEW_VIOLATION" && data.violation) {
+            if (isSampleViolation(data.violation)) return;
             setLiveViolations((prev) => {
               if (prev.some((v) => v.id === data.violation.id)) return prev;
               playProctorChime();
@@ -977,6 +1111,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         bc = new BroadcastChannel("gpp_cbt_violations_channel");
         bc.onmessage = (event) => {
           if (event.data?.type === "NEW_VIOLATION" && event.data.violation) {
+            if (isSampleViolation(event.data.violation)) return;
             setLiveViolations((prev) => {
               if (prev.some((v) => v.id === event.data.violation.id)) return prev;
               playProctorChime();
@@ -1000,6 +1135,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               const map = new Map(prev.map((v) => [v.id, v]));
               let hasNew = false;
               data.violations.forEach((v: any) => {
+                if (isSampleViolation(v)) return;
                 if (!map.has(v.id)) {
                   map.set(v.id, v);
                   hasNew = true;
@@ -1018,12 +1154,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (bc) bc.close();
       clearInterval(pollInterval);
     };
-  }, [playProctorChime]);
+  }, [playProctorChime, isSampleViolation]);
 
   // Filtered live violations list for the audit table
   const filteredViolations = useMemo(() => {
     const term = violationSearchTerm.trim().toLowerCase();
     return liveViolations.filter((v) => {
+      if (isSampleViolation(v)) return false;
+
       const matchesSearch =
         !term ||
         (v.studentName || "").toLowerCase().includes(term) ||
@@ -1032,7 +1170,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         (v.title || "").toLowerCase().includes(term);
 
       const matchesClass =
-        violationClassFilter === "ALL" || (v.className || "").toLowerCase() === violationClassFilter.toLowerCase();
+        violationClassFilter === "ALL" || isSameClass(v.className, violationClassFilter);
 
       const matchesType =
         violationTypeFilter === "ALL" || (v.type || "") === violationTypeFilter;
@@ -1162,6 +1300,72 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
+            {/* Auto-Refresh Real-Time Status & Control Pill */}
+            <div className="flex items-center space-x-2.5 bg-slate-950 px-3.5 py-1.5 rounded-2xl border border-slate-800 text-xs shadow-inner">
+              <div className="relative flex items-center justify-center">
+                <span
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                    autoRefreshEnabled
+                      ? "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]"
+                      : "bg-slate-500"
+                  }`}
+                />
+                {autoRefreshEnabled && (
+                  <span className="absolute w-4 h-4 rounded-full bg-emerald-400/40 animate-ping" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-slate-300 font-bold">Auto-Refres</span>
+                  <span
+                    className={`text-[9px] px-1.5 py-0.2 rounded-full font-extrabold uppercase ${
+                      autoRefreshEnabled
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                        : "bg-slate-800 text-slate-400"
+                    }`}
+                  >
+                    {autoRefreshEnabled ? `${countdown}s` : "OFF"}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  {lastRefreshedAt ? `Live: ${lastRefreshedAt}` : "Real-Time"}
+                </p>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex items-center space-x-1 pl-2 border-l border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => triggerAutoRefresh(true)}
+                  disabled={isAutoRefreshing}
+                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-cyan-400 hover:text-cyan-300 transition cursor-pointer"
+                  title="Refres manual data sekarang"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isAutoRefreshing ? "animate-spin text-cyan-300" : ""}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                    autoRefreshEnabled
+                      ? "bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30"
+                      : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}
+                  title={autoRefreshEnabled ? "Jeda auto-refresh" : "Mulai auto-refresh"}
+                >
+                  {autoRefreshEnabled ? "JEDA" : "AKTIF"}
+                </button>
+              </div>
+            </div>
+
+            {/* Exam Ongoing Banner: Hide Sample Data */}
+            {isExamOngoing && (
+              <div className="flex items-center space-x-2 px-3 py-1.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold animate-pulse shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span>Ujian Berlangsung: Bebas Data Sampel</span>
+              </div>
+            )}
+
             {/* Google Drive Integration Button */}
             <button
               type="button"
@@ -1187,6 +1391,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <Users className="w-4 h-4" />
             <span>Kelola Siswa Massal ({students.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("master_students")}
+            className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+              activeTab === "master_students"
+                ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+                : "bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
+            }`}
+          >
+            <Database className="w-4 h-4 text-emerald-400" />
+            <span className="flex items-center gap-1.5">
+              <span>Data Master Siswa</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-bold">
+                Nama &amp; Kelas
+              </span>
+            </span>
           </button>
 
           <button
@@ -1281,6 +1502,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           )}
         </div>
 
+        {/* TAB: DATA MASTER SISWA (HANYA NAMA & KELAS) */}
+        {activeTab === "master_students" && (
+          <MasterStudentManager
+            students={students}
+            availableClasses={availableClasses}
+            firebaseStatus={firebaseStatus || "connected"}
+            lastSyncTime={lastSyncTime || undefined}
+            onAddStudent={onAddStudent}
+            onBulkAddStudents={onBulkAddStudents}
+            onDeleteStudent={onDeleteStudent}
+            onBulkDeleteStudents={onBulkDeleteStudents}
+            onEmptyClass={handleEmptyClass}
+            onAddClasses={handleAddClasses}
+            onRefreshData={onRefreshAllData}
+          />
+        )}
+
         {/* TAB 1: KELOLA SISWA MASSAL */}
         {activeTab === "students" && (
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-7 shadow-xl space-y-5">
@@ -1319,7 +1557,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         : `Semua Kelas (${students.length})`}
                     </option>
                     {availableClasses.map((cls) => {
-                      const count = students.filter((s) => s.className === cls).length;
+                      const count = students.filter((s) => isSameClass(s.className, cls)).length;
                       const isActive = isExamClassActive(config, cls);
                       if (showOnlyActiveExam && !isActive) {
                         return null;
@@ -1404,6 +1642,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 >
                   <Plus className="w-4 h-4" />
                   <span>Tambah Siswa</span>
+                </button>
+
+                {/* Input Cepat Data Master (Nama & Kelas) */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("master_students")}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-emerald-600/20 transition cursor-pointer"
+                  title="Input cepat data master siswa hanya nama dan kelas"
+                >
+                  <Database className="w-4 h-4" />
+                  <span>Input Data Master (Nama &amp; Kelas)</span>
                 </button>
 
                 {/* Tambah Siswa Per Kelas Button */}
@@ -1721,14 +1970,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {availableClasses
                   .filter((cls) => isExamClassActive(config, cls))
                   .map((cls) => {
-                    const count = students.filter(
-                      (s) =>
-                        (s?.className || "").trim().replace(/\s+/g, " ").toLowerCase() ===
-                        (cls || "").trim().replace(/\s+/g, " ").toLowerCase()
-                    ).length;
-                    const isSelected =
-                      (studentClassFilter || "").trim().replace(/\s+/g, " ").toLowerCase() ===
-                      (cls || "").trim().replace(/\s+/g, " ").toLowerCase();
+                    const count = students.filter((s) => isSameClass(s?.className, cls)).length;
+                    const isSelected = isSameClass(studentClassFilter, cls);
                     return (
                       <button
                         key={cls}
@@ -1884,7 +2127,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         )}
                       </button>
                     </th>
-                    <th className="p-3.5">NISN &amp; Nama Siswa</th>
+                    <th className="p-3.5">
+                      <div className="flex items-center space-x-1.5">
+                        <span>NISN &amp; Nama Siswa</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30 normal-case">
+                          Abjad A-Z
+                        </span>
+                      </div>
+                    </th>
                     <th className="p-3.5">Kelas</th>
                     <th className="p-3.5">Token Barcode</th>
                     <th className="p-3.5">Status Login</th>
@@ -2102,7 +2352,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <option value="ALL">Semua Kelas ({students.length})</option>
                   {availableClasses.map((cls) => {
                     const count = students.filter(
-                      (s) => (s?.className || "").trim().toLowerCase() === (cls || "").trim().toLowerCase()
+                      (s) => isSameClass(s?.className, cls)
                     ).length;
                     return (
                       <option key={cls} value={cls}>
@@ -2139,6 +2389,190 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Cloud className="w-4 h-4" />
                   <span>Simpan ke Drive</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Real-Time Exam Monitoring & Auto-Refresh Controls Bar */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950/60 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg">
+              <div className="flex items-center space-x-3">
+                <div className="relative flex items-center justify-center">
+                  <span className={`w-3 h-3 rounded-full ${autoRefreshEnabled ? "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.9)]" : "bg-slate-500"}`} />
+                  {autoRefreshEnabled && <span className="absolute w-5 h-5 rounded-full bg-emerald-400/40 animate-ping" />}
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                      <span>Pemantauan Proses &amp; Hasil Ujian Real-Time</span>
+                    </h3>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
+                      autoRefreshEnabled
+                        ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                        : "bg-slate-800 text-slate-400 border-slate-700"
+                    }`}>
+                      {autoRefreshEnabled ? "Auto-Refres Aktif" : "Auto-Refres Jeda"}
+                    </span>
+                    {isExamOngoing && (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-extrabold uppercase animate-pulse">
+                        Ujian Berlangsung &bull; Bebas Data Sampel
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Memperbarui seketika status peserta, perolehan nilai, dan log pelanggaran keamanan secara otomatis.
+                    {lastRefreshedAt && <span className="ml-1 text-slate-500 font-mono">(Terakhir: {lastRefreshedAt})</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Controls: Countdown, Interval, Toggle, Manual Refresh */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Countdown Badge */}
+                <div className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono flex items-center space-x-1.5 text-slate-300">
+                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Update: <strong className="text-emerald-400">{countdown}s</strong></span>
+                </div>
+
+                {/* Interval Buttons */}
+                <div className="flex items-center space-x-1 bg-slate-950 border border-slate-800 p-1 rounded-xl text-xs font-mono">
+                  {[3, 5, 10, 30].map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => handleSetRefreshInterval(sec)}
+                      className={`px-2 py-0.5 rounded-lg font-bold transition cursor-pointer ${
+                        refreshIntervalSec === sec
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                      title={`Atur interval refresh ke ${sec} detik`}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+
+                {/* Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center space-x-1.5 ${
+                    autoRefreshEnabled
+                      ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30 hover:bg-emerald-600/30"
+                      : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700 text-white"
+                  }`}
+                >
+                  {autoRefreshEnabled ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                  <span>{autoRefreshEnabled ? "Jeda" : "Mulai"}</span>
+                </button>
+
+                {/* Manual Refresh Button */}
+                <button
+                  type="button"
+                  onClick={() => triggerAutoRefresh(true)}
+                  disabled={isAutoRefreshing}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition cursor-pointer flex items-center space-x-1.5 shadow-md shadow-indigo-600/20 disabled:opacity-50"
+                  title="Sinkronkan dan muat ulang seluruh data ujian sekarang"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isAutoRefreshing ? "animate-spin text-white" : ""}`} />
+                  <span>{isAutoRefreshing ? "Memperbarui..." : "Refres Sekarang"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Process & Security KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Card 1: Total Siswa Real */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+                  <span>Peserta Real</span>
+                  <Users className="w-4 h-4 text-blue-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-white font-mono">{liveExamMetrics.total}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Siswa Bebas Sampel</div>
+                </div>
+              </div>
+
+              {/* Card 2: Sedang Mengerjakan */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-amber-500/30 flex flex-col justify-between relative overflow-hidden">
+                <div className="flex items-center justify-between text-amber-300 text-xs font-bold">
+                  <span className="flex items-center space-x-1">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
+                    <span>Mengerjakan</span>
+                  </span>
+                  <Clock className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-amber-400 font-mono flex items-baseline space-x-1">
+                    <span>{liveExamMetrics.inProgressCount}</span>
+                    <span className="text-[11px] text-amber-400/80 font-normal">
+                      ({liveExamMetrics.total > 0 ? Math.round((liveExamMetrics.inProgressCount / liveExamMetrics.total) * 100) : 0}%)
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Sedang Berlangsung</div>
+                </div>
+              </div>
+
+              {/* Card 3: Selesai / Terkirim */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-blue-500/30 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-blue-300 text-xs font-bold">
+                  <span>Selesai / Kirim</span>
+                  <CheckCircle2 className="w-4 h-4 text-blue-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-blue-400 font-mono flex items-baseline space-x-1">
+                    <span>{liveExamMetrics.submittedCount}</span>
+                    <span className="text-[11px] text-blue-400/80 font-normal">
+                      ({liveExamMetrics.total > 0 ? Math.round((liveExamMetrics.submittedCount / liveExamMetrics.total) * 100) : 0}%)
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Sudah Tuntas</div>
+                </div>
+              </div>
+
+              {/* Card 4: Belum Mulai */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+                  <span>Belum Mulai</span>
+                  <Clock className="w-4 h-4 text-slate-500" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-slate-300 font-mono">{liveExamMetrics.notStartedCount}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Menunggu Masuk</div>
+                </div>
+              </div>
+
+              {/* Card 5: Didiskualifikasi */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-rose-500/30 flex flex-col justify-between">
+                <div className="flex items-center justify-between text-rose-300 text-xs font-bold">
+                  <span>Diskualifikasi</span>
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-rose-400 font-mono">{liveExamMetrics.disqualifiedCount}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Pelanggaran Maksimal</div>
+                </div>
+              </div>
+
+              {/* Card 6: Pelanggaran Keamanan */}
+              <div
+                onClick={() => setActiveTab("violations")}
+                className="p-3.5 rounded-2xl bg-slate-950/70 border border-rose-500/40 hover:border-rose-400 flex flex-col justify-between cursor-pointer transition shadow-sm group"
+                title="Klik untuk melihat rincian log audit pelanggaran keamanan"
+              >
+                <div className="flex items-center justify-between text-rose-300 text-xs font-bold">
+                  <span>Pelanggaran</span>
+                  <ShieldAlert className="w-4 h-4 text-rose-400 group-hover:scale-110 transition" />
+                </div>
+                <div className="mt-2">
+                  <div className="text-xl font-black text-rose-400 font-mono flex items-baseline space-x-1">
+                    <span>{liveViolations.length}</span>
+                    <span className="text-[10px] text-slate-400 font-normal">insiden</span>
+                  </div>
+                  <div className="text-[10px] text-rose-400/80 group-hover:underline mt-0.5 flex items-center space-x-1">
+                    <span>Lihat Audit Live &rarr;</span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2231,8 +2665,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-950 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800">
                   <tr>
-                    <th className="p-3.5">Nama &amp; NISN</th>
+                    <th className="p-3.5">
+                      <div className="flex items-center space-x-1.5">
+                        <span>Nama &amp; NISN</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30 normal-case">
+                          Abjad A-Z
+                        </span>
+                      </div>
+                    </th>
                     <th className="p-3.5">Kelas</th>
+                    <th className="p-3.5">Status Pengerjaan</th>
                     <th className="p-3.5">Skor PG</th>
                     <th className="p-3.5">Skor Essay</th>
                     <th className="p-3.5">Total Nilai</th>
@@ -2260,8 +2702,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredResultsStudents.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500">
-                        Tidak ada data hasil ujian untuk kelas ini.
+                      <td colSpan={8} className="p-8 text-center text-slate-500">
+                        Tidak ada data hasil ujian untuk kelas ini (Data sampel disembunyikan otomatis selama ujian).
                       </td>
                     </tr>
                   ) : (
@@ -2272,6 +2714,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <p className="text-[11px] text-slate-500">{st.nisn}</p>
                       </td>
                       <td className="p-3.5 font-semibold text-slate-300">{st.className}</td>
+                      <td className="p-3.5">
+                        {st.examStatus === "in_progress" ? (
+                          <div className="flex flex-col space-y-0.5">
+                            <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 w-fit">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                              <span>Sedang Mengerjakan</span>
+                            </span>
+                            {st.startedAt && (
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                Masuk: {new Date(st.startedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
+                        ) : st.examStatus === "submitted" ? (
+                          <div className="flex flex-col space-y-0.5">
+                            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 w-fit">
+                              <CheckCircle2 className="w-3 h-3 text-blue-400" />
+                              <span>Selesai Terkirim</span>
+                            </span>
+                            {st.submittedAt && (
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                Kirim: {new Date(st.submittedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
+                        ) : st.examStatus === "disqualified" ? (
+                          <div className="flex flex-col space-y-0.5">
+                            <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 w-fit">
+                              <AlertTriangle className="w-3 h-3 text-rose-400" />
+                              <span>Didiskualifikasi</span>
+                            </span>
+                            <span className="text-[10px] text-rose-400/80 font-mono">
+                              {st.violationsCount}x Insiden
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700 w-fit">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            <span>Belum Mulai</span>
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3.5 font-mono text-blue-400 font-bold">{st.mcqScore}</td>
                       <td className="p-3.5 font-mono text-cyan-400 font-bold">{st.essayScore}</td>
                       <td className="p-3.5 font-mono text-sm font-extrabold text-white">
@@ -3119,6 +3603,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
+                {/* Auto-Refresh Countdown & Quick Poll */}
+                <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300">
+                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Update: <strong className="text-emerald-400">{countdown}s</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => triggerAutoRefresh(false)}
+                    disabled={isAutoRefreshing}
+                    className="ml-1 p-1 hover:bg-slate-800 rounded text-cyan-400 transition cursor-pointer"
+                    title="Cek pembaruan pelanggaran sekarang"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isAutoRefreshing ? "animate-spin" : ""}`} />
+                  </button>
+                </div>
+
                 {/* Audio Alert Toggle */}
                 <button
                   type="button"
@@ -3223,7 +3722,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {availableClasses.map((cls) => (
                     <option key={cls} value={cls}>
                       Kelas {cls} (
-                      {liveViolations.filter((v) => (v.className || "").toLowerCase() === cls.toLowerCase()).length})
+                      {liveViolations.filter((v) => isSameClass(v.className, cls)).length})
                     </option>
                   ))}
                 </select>
@@ -4019,17 +4518,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             }
 
             // 4. Auto-register any newly created classes
-            const existingClassSet = new Set(
-              availableClasses.map((c) => (c || "").trim().toLowerCase()).filter(Boolean)
-            );
             const newlyCreatedClasses: string[] = [];
             const checkAndAddClass = (cls?: string) => {
               if (!cls) return;
-              const trimmed = cls.trim();
-              const lower = trimmed.toLowerCase();
-              if (!existingClassSet.has(lower) && !newlyCreatedClasses.includes(trimmed)) {
-                newlyCreatedClasses.push(trimmed);
-                existingClassSet.add(lower);
+              const canonical = canonicalizeClassName(cls);
+              if (!canonical) return;
+              const alreadyExists =
+                availableClasses.some((c) => isSameClass(c, canonical)) ||
+                newlyCreatedClasses.some((c) => isSameClass(c, canonical));
+              if (!alreadyExists) {
+                newlyCreatedClasses.push(canonical);
               }
             };
 

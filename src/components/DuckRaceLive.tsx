@@ -17,7 +17,8 @@ import {
   Check,
 } from "lucide-react";
 import confetti from "canvas-confetti";
-import { Student, ExamConfig, Question, isExamClassActive } from "../types";
+import { Student, ExamConfig, Question, isExamClassActive, isSampleStudent } from "../types";
+import { DATABASE_CLASSES, deduplicateClasses, isSameClass } from "../utils/classUtils";
 
 interface DuckRaceLiveProps {
   students: Student[];
@@ -64,7 +65,10 @@ export const DuckRaceLive: React.FC<DuckRaceLiveProps> = ({
 
   // Extract all unique classes
   const allClasses = useMemo(() => {
-    return Array.from(new Set(students.map((s) => s.className).filter(Boolean))).sort();
+    return deduplicateClasses([
+      ...DATABASE_CLASSES,
+      ...students.map((s) => s.className),
+    ]);
   }, [students]);
 
   // Active classes based on config
@@ -106,8 +110,12 @@ export const DuckRaceLive: React.FC<DuckRaceLiveProps> = ({
   };
 
   // 1. Filter students according to participantScope (Synchronized with active exam)
+  // NEVER show sample students during live exam race!
   const scopedStudents = useMemo(() => {
     return students.filter((s) => {
+      // Exclude sample students during active exam
+      if (isSampleStudent(s)) return false;
+
       if (participantScope === "active_exam") {
         if (config && !isExamClassActive(config, s.className)) {
           return false;
@@ -124,15 +132,14 @@ export const DuckRaceLive: React.FC<DuckRaceLiveProps> = ({
         return isClassActive && hasStarted;
       }
       return true; // "all"
-    });
+    }).sort((a, b) => (a.name || "").localeCompare(b.name || "", "id", { sensitivity: "base", numeric: true }));
   }, [students, config, participantScope]);
 
   // 2. Filter by class and search keyword
   const baseFiltered = useMemo(() => {
     return scopedStudents.filter((s) => {
       const matchClass =
-        selectedClass === "all" ||
-        (s?.className || "").trim().toLowerCase() === (selectedClass || "").trim().toLowerCase();
+        selectedClass === "all" || isSameClass(s?.className, selectedClass);
       const matchSearch =
         !(duckSearch || "").trim() ||
         (s?.name || "").toLowerCase().includes((duckSearch || "").trim().toLowerCase()) ||
