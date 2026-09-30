@@ -120,6 +120,21 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
   const [showResetLoginModal, setShowResetLoginModal] = useState(false);
   const [showRubricModal, setShowRubricModal] = useState(false);
 
+  // In-app confirm modal state (safe in iframe)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    variant?: "danger" | "warning";
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
+
   // Database Management State
   const [backupsList, setBackupsList] = useState<BackupFileInfo[]>([]);
   const [loadingBackups, setLoadingBackups] = useState(false);
@@ -1683,11 +1698,19 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (window.confirm("Kembalikan daftar siswa ke setelan awal (menghapus data simulasi)?")) {
-                      onRestoreInitialStudents();
-                      setPerfMessage("Data simulasi dibersihkan. Kembali ke siswa awal.");
-                      setTimeout(() => setPerfMessage(null), 5000);
-                    }
+                    setConfirmModal({
+                      isOpen: true,
+                      title: "Pulihkan Daftar Siswa Asli",
+                      message: "Kembalikan daftar siswa ke setelan awal (menghapus data simulasi)?",
+                      confirmLabel: "Ya, Pulihkan Siswa Asli",
+                      variant: "warning",
+                      onConfirm: () => {
+                        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                        onRestoreInitialStudents();
+                        setPerfMessage("Data simulasi dibersihkan. Kembali ke siswa awal.");
+                        setTimeout(() => setPerfMessage(null), 5000);
+                      },
+                    });
                   }}
                   className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-bold text-xs flex items-center space-x-2 transition cursor-pointer"
                 >
@@ -1890,18 +1913,22 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    if (
-                      window.confirm(
-                        `Hapus seluruh ${sampleStudentsCount} data sampel siswa bawaan sistem?\n\nTindakan ini akan mengosongkan/membersihkan data siswa contoh agar database bersih untuk data siswa riil.`
-                      )
-                    ) {
-                      onDeleteSampleStudents?.();
-                      setDbMessage({
-                        type: "success",
-                        text: `Berhasil menghapus seluruh ${sampleStudentsCount} data siswa sampel bawaan!`,
-                      });
-                      setTimeout(() => setDbMessage(null), 5000);
-                    }
+                    setConfirmModal({
+                      isOpen: true,
+                      title: "Hapus Data Sampel Bawaan",
+                      message: `Hapus seluruh ${sampleStudentsCount} data sampel siswa bawaan sistem? Tindakan ini akan mengosongkan/membersihkan data siswa contoh agar database bersih untuk peserta riil.`,
+                      confirmLabel: `Hapus ${sampleStudentsCount} Sampel`,
+                      variant: "danger",
+                      onConfirm: () => {
+                        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                        onDeleteSampleStudents?.();
+                        setDbMessage({
+                          type: "success",
+                          text: `Berhasil menghapus seluruh ${sampleStudentsCount} data siswa sampel bawaan!`,
+                        });
+                        setTimeout(() => setDbMessage(null), 5000);
+                      },
+                    });
                   }}
                   className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center space-x-2 transition cursor-pointer flex-shrink-0 shadow-lg shadow-rose-600/20"
                 >
@@ -2151,24 +2178,32 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                         <td className="p-3 text-right">
                           <button
                             type="button"
-                            onClick={async () => {
-                              if (window.confirm(`Yakin ingin memulihkan database ke snapshot [${bk.label || bk.filename}]?`)) {
-                                if (onRestoreBackup) {
-                                  const res = await onRestoreBackup(bk.filename);
-                                  if (res.success) {
-                                    setDbMessage({
-                                      type: "success",
-                                      text: "Database berhasil dipulihkan dari snapshot server!",
-                                    });
-                                  } else {
-                                    setDbMessage({
-                                      type: "error",
-                                      text: res.message || "Gagal memulihkan snapshot",
-                                    });
+                            onClick={() => {
+                              setConfirmModal({
+                                isOpen: true,
+                                title: "Pulihkan Snapshot Database",
+                                message: `Yakin ingin memulihkan database ke snapshot [${bk.label || bk.filename}]?`,
+                                confirmLabel: "Ya, Pulihkan Database",
+                                variant: "warning",
+                                onConfirm: async () => {
+                                  setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                                  if (onRestoreBackup) {
+                                    const res = await onRestoreBackup(bk.filename);
+                                    if (res.success) {
+                                      setDbMessage({
+                                        type: "success",
+                                        text: "Database berhasil dipulihkan dari snapshot server!",
+                                      });
+                                    } else {
+                                      setDbMessage({
+                                        type: "error",
+                                        text: res.message || "Gagal memulihkan snapshot",
+                                      });
+                                    }
+                                    setTimeout(() => setDbMessage(null), 5000);
                                   }
-                                  setTimeout(() => setDbMessage(null), 5000);
-                                }
-                              }
+                                },
+                              });
                             }}
                             className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition cursor-pointer"
                           >
@@ -2453,6 +2488,56 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
             setShowRubricModal(false);
           }}
         />
+      )}
+
+      {/* In-App Confirmation Modal (Safe in iframes) */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start space-x-3.5">
+              <div
+                className={`p-3 rounded-2xl shrink-0 ${
+                  confirmModal.variant === "warning"
+                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                    : "bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                }`}
+              >
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-bold text-white">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() =>
+                  setConfirmModal((prev) => ({ ...prev, isOpen: false }))
+                }
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`px-4 py-2 rounded-xl text-white text-xs font-bold transition shadow-lg cursor-pointer flex items-center space-x-1.5 ${
+                  confirmModal.variant === "warning"
+                    ? "bg-amber-600 hover:bg-amber-500 shadow-amber-600/20"
+                    : "bg-rose-600 hover:bg-rose-500 shadow-rose-600/20"
+                }`}
+              >
+                <span>{confirmModal.confirmLabel || "Ya, Lanjutkan"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -103,7 +103,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setIsLockedAlert(false);
 
     if (!identifier.trim()) {
-      setErrorMessage("Silakan masukkan NISN / Username!");
+      setErrorMessage("Silakan masukkan NISN / ID Siswa / Username!");
       return;
     }
 
@@ -558,7 +558,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder={
                     activeTab === "siswa"
-                      ? "Contoh: 0051234001 atau siswa01"
+                      ? "Contoh: 0051234001, std-1, atau siswa01"
                       : activeTab === "guru"
                       ? "guru"
                       : "admin"

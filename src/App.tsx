@@ -52,6 +52,7 @@ export default function App() {
     restoreQuestionRevision,
     bulkAddQuestions,
     deleteQuestion,
+    bulkDeleteQuestions,
     updateStaffProfile,
     updateExamConfig,
     resetAllExamData,
@@ -207,6 +208,7 @@ export default function App() {
             onRestoreQuestionRevision={restoreQuestionRevision}
             onBulkAddQuestions={bulkAddQuestions}
             onDeleteQuestion={deleteQuestion}
+            onBulkDeleteQuestions={bulkDeleteQuestions}
             questionPackages={questionPackages}
             onCreateQuestionPackage={createQuestionPackage}
             onUpdateQuestionPackage={updateQuestionPackage}

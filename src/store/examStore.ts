@@ -188,6 +188,13 @@ export function useExamStore() {
 
   // 3. Questions - Firestore Collection 'questions'
   const [questions, setQuestions] = useState<Question[]>(() => {
+    try {
+      const raw = safeStorage.getItem("GPP_EXAM_QUESTIONS_V1");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return normalizeQuestionsWithPackages(parsed);
+      }
+    } catch {}
     return normalizeQuestionsWithPackages(INITIAL_QUESTIONS);
   });
 
@@ -509,16 +516,15 @@ export function useExamStore() {
               const q = docSnap.data() as Question;
               fetchedQuestions.push({ ...q, id: q.id || docSnap.id });
             });
-            if (fetchedQuestions.length > 0) {
-              const normalized = normalizeQuestionsWithPackages(fetchedQuestions);
-              normalized.sort((a, b) => {
-                const numA = parseInt((a.id || "").replace(/\D/g, ""), 10);
-                const numB = parseInt((b.id || "").replace(/\D/g, ""), 10);
-                if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                return (a.id || "").localeCompare(b.id || "");
-              });
-              setQuestions(normalized);
-            }
+            const normalized = normalizeQuestionsWithPackages(fetchedQuestions);
+            normalized.sort((a, b) => {
+              const numA = parseInt((a.id || "").replace(/\D/g, ""), 10);
+              const numB = parseInt((b.id || "").replace(/\D/g, ""), 10);
+              if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+              return (a.id || "").localeCompare(b.id || "");
+            });
+            setQuestions(normalized);
+            safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(normalized));
             setFirebaseStatus("connected");
             setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
           },
@@ -676,16 +682,27 @@ export function useExamStore() {
         return { success: false, message: "Kombinasi username atau password salah!" };
       }
 
-      // Siswa login
-      const studentIndex = students.findIndex(
-        (s) =>
-          s.username.toLowerCase() === identifier.toLowerCase() ||
-          s.nisn === identifier ||
-          s.startBarcodeToken.toLowerCase() === identifier.toLowerCase()
-      );
+      // Siswa login: Izinkan login pakai NISN / ID Siswa / Username / Barcode Token / Nama Lengkap
+      const cleanInput = (identifier || "").trim();
+      const cleanLower = cleanInput.toLowerCase();
+      const studentIndex = students.findIndex((s) => {
+        const u = (s.username || "").trim().toLowerCase();
+        const nisn = (s.nisn || "").trim();
+        const id = (s.id || "").trim().toLowerCase();
+        const token = (s.startBarcodeToken || "").trim().toLowerCase();
+        const name = (s.name || "").trim().toLowerCase();
+        return (
+          u === cleanLower ||
+          nisn === cleanInput ||
+          nisn.toLowerCase() === cleanLower ||
+          id === cleanLower ||
+          token === cleanLower ||
+          name === cleanLower
+        );
+      });
 
       if (studentIndex === -1) {
-        return { success: false, message: "Siswa dengan NISN / Username tersebut tidak ditemukan!" };
+        return { success: false, message: "Siswa dengan NISN / ID Siswa / Username tersebut tidak ditemukan!" };
       }
 
       const student = students[studentIndex];
@@ -2074,10 +2091,11 @@ export function useExamStore() {
   );
 
   const deleteQuestion = useCallback(async (id: string) => {
+    let nextList: Question[] = [];
     setQuestions((prev) => {
-      const next = prev.filter((q) => q.id !== id);
-      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(next));
-      return next;
+      nextList = prev.filter((q) => q.id !== id);
+      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(nextList));
+      return nextList;
     });
 
     try {
@@ -2090,15 +2108,18 @@ export function useExamStore() {
     } catch (err) {
       console.error("[Firebase] Error deleting question from Firestore:", err);
     }
+
+    syncToServerDb({ questions: nextList, label: "delete_question" });
   }, []);
 
   const bulkDeleteQuestions = useCallback(async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
     const idSet = new Set(ids);
+    let nextList: Question[] = [];
     setQuestions((prev) => {
-      const next = prev.filter((q) => !idSet.has(q.id));
-      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(next));
-      return next;
+      nextList = prev.filter((q) => !idSet.has(q.id));
+      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(nextList));
+      return nextList;
     });
 
     try {
@@ -2113,6 +2134,8 @@ export function useExamStore() {
     } catch (err) {
       console.error("[Firebase] Error bulk deleting questions from Firestore:", err);
     }
+
+    syncToServerDb({ questions: nextList, label: "bulk_delete_questions" });
   }, []);
 
   const updateQuestion = useCallback(

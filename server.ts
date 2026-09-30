@@ -91,9 +91,22 @@ class ServerDatabase {
     const current = this.getDatabase();
 
     let newQuestions = incoming.questions ?? current.questions;
-    if (current.questions?.length > 0 && Array.isArray(incoming.questions) && incoming.questions.length === 0) {
+    const isExplicitQuestionDelete =
+      label.includes("delete") ||
+      label.includes("restore") ||
+      label.includes("import") ||
+      label.includes("reset");
+
+    if (
+      !isExplicitQuestionDelete &&
+      current.questions?.length > 0 &&
+      Array.isArray(incoming.questions) &&
+      incoming.questions.length === 0
+    ) {
       console.warn("[ServerDB] Rejected empty questions update to protect admin data!");
       newQuestions = current.questions;
+    } else if (Array.isArray(incoming.questions)) {
+      newQuestions = incoming.questions;
     }
 
     let newStudents = incoming.students ?? current.students;

@@ -124,6 +124,7 @@ interface AdminDashboardProps {
     targetPackageName?: string
   ) => void;
   onDeleteQuestion: (id: string) => void;
+  onBulkDeleteQuestions?: (ids: string[]) => void;
   onOpenDuckRace?: () => void;
   onUpdateAdminProfile?: (
     staffId: string,
@@ -183,6 +184,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onRestoreQuestionRevision,
   onBulkAddQuestions,
   onDeleteQuestion,
+  onBulkDeleteQuestions,
   onUpdateAdminProfile,
   onUpdateExamConfig,
   onResetAllExamData,
@@ -555,6 +557,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [showRevisionModal, setShowRevisionModal] = useState<boolean>(false);
   const [selectedRevisionQuestion, setSelectedRevisionQuestion] = useState<Question | null>(null);
   const [questionGradeFilter, setQuestionGradeFilter] = useState<"Semua" | "X" | "XI" | "XII">("Semua");
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const excelQuestionFileInputRef = useRef<HTMLInputElement>(null);
 
   // List of question packages (fallback to INITIAL_PACKAGES if empty)
@@ -566,6 +569,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [selectedPackageId, setSelectedPackageId] = useState<string>(() => {
     return config.activePackageId || packagesList[0]?.id || "pkg-xii-tka";
   });
+
+  // Clear selected questions when package or grade filter changes
+  useEffect(() => {
+    setSelectedQuestionIds([]);
+  }, [selectedPackageId, questionGradeFilter]);
 
   // Package Modal State (for creating new file or editing file info)
   const [showPackageModal, setShowPackageModal] = useState<boolean>(false);
@@ -706,24 +714,85 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  // Selection handlers for Question Bank
+  const handleToggleSelectQuestion = (id: string) => {
+    setSelectedQuestionIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllQuestions = () => {
+    if (selectedQuestionIds.length === filteredBankQuestions.length && filteredBankQuestions.length > 0) {
+      setSelectedQuestionIds([]);
+    } else {
+      setSelectedQuestionIds(filteredBankQuestions.map((q) => q.id));
+    }
+  };
+
+  const handleBulkDeleteQuestions = () => {
+    if (selectedQuestionIds.length === 0) return;
+    const count = selectedQuestionIds.length;
+    setConfirmDialog({
+      isOpen: true,
+      title: "Hapus Massal Butir Soal",
+      message: `Apakah Anda yakin ingin menghapus ${count} butir soal terpilih secara massal?`,
+      detail: `Soal yang dipilih akan dihapus permanen dari berkas naskah "${selectedPackage?.name || "Bank Soal"}" dan database cloud Firebase. Tindakan ini tidak dapat dibatalkan.`,
+      confirmLabel: `Ya, Hapus ${count} Soal`,
+      variant: "danger",
+      onConfirm: async () => {
+        if (onBulkDeleteQuestions) {
+          onBulkDeleteQuestions(selectedQuestionIds);
+        } else {
+          selectedQuestionIds.forEach((id) => onDeleteQuestion(id));
+        }
+        setSelectedQuestionIds([]);
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        setStudentSuccessToast(`Berhasil menghapus ${count} butir soal.`);
+        setTimeout(() => setStudentSuccessToast(null), 4000);
+      },
+    });
+  };
+
+  const handleSingleDeleteQuestion = (q: Question, idx: number) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Hapus Butir Soal",
+      message: `Apakah Anda yakin ingin menghapus butir soal #${idx + 1}?`,
+      detail: (q.question || "").replace(/<[^>]*>?/gm, "").slice(0, 140) + ((q.question || "").length > 140 ? "..." : ""),
+      confirmLabel: "Hapus Soal",
+      variant: "danger",
+      onConfirm: () => {
+        onDeleteQuestion(q.id);
+        setSelectedQuestionIds((prev) => prev.filter((id) => id !== q.id));
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        setStudentSuccessToast(`Butir soal #${idx + 1} berhasil dihapus.`);
+        setTimeout(() => setStudentSuccessToast(null), 4000);
+      },
+    });
+  };
+
   const handleDeleteCurrentPackage = async (pkgId: string) => {
     const pkg = packagesList.find((p) => p.id === pkgId);
     if (!pkg) return;
     const pkgQsCount = questionCountByPackage[pkgId] || 0;
-    if (
-      !window.confirm(
-        `Apakah Anda yakin ingin menghapus berkas "${pkg.name}" beserta ${pkgQsCount} butir soal di dalamnya?\n\nSoal di berkas lain tidak akan terpengaruh.`
-      )
-    ) {
-      return;
-    }
-    if (onDeleteQuestionPackage) {
-      await onDeleteQuestionPackage(pkgId);
-      const remaining = packagesList.filter((p) => p.id !== pkgId);
-      setSelectedPackageId(remaining[0]?.id || "all");
-      setStudentSuccessToast(`Berkas "${pkg.name}" berhasil dihapus.`);
-      setTimeout(() => setStudentSuccessToast(null), 4000);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: `Hapus Berkas "${pkg.name}"`,
+      message: `Apakah Anda yakin ingin menghapus berkas "${pkg.name}" beserta ${pkgQsCount} butir soal di dalamnya?`,
+      detail: "Soal pada berkas lain tidak akan terpengaruh. Seluruh butir soal di dalam berkas ini akan dihapus permanen.",
+      confirmLabel: "Ya, Hapus Berkas",
+      variant: "danger",
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        if (onDeleteQuestionPackage) {
+          await onDeleteQuestionPackage(pkgId);
+          const remaining = packagesList.filter((p) => p.id !== pkgId);
+          setSelectedPackageId(remaining[0]?.id || "all");
+          setStudentSuccessToast(`Berkas "${pkg.name}" berhasil dihapus.`);
+          setTimeout(() => setStudentSuccessToast(null), 4000);
+        }
+      },
+    });
   };
 
   const handleExcelQuestionUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1499,33 +1568,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [liveViolations, violationSearchTerm, violationClassFilter, violationTypeFilter]);
 
   // Clear violations handler
-  const handleClearViolations = async () => {
-    if (!window.confirm("Apakah Anda yakin ingin menghapus seluruh rekaman log pelanggaran keamanan?")) {
-      return;
-    }
-    setIsClearingViolations(true);
-    try {
-      await fetch("/api/violations", { method: "DELETE" });
-      setLiveViolations([]);
-      if (onBulkUpdateStudents) {
-        const updates = students
-          .filter((s) => (s.violationsLog?.length || 0) > 0)
-          .map((s) => ({
-            id: s.id,
-            violationsCount: 0,
-            violationsLog: [],
-          }));
-        if (updates.length > 0) {
-          await onBulkUpdateStudents(updates);
+  const handleClearViolations = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Bersihkan Log Pelanggaran",
+      message: "Apakah Anda yakin ingin menghapus seluruh rekaman log pelanggaran keamanan?",
+      detail: "Seluruh catatan insiden kecurangan dan rekaman audit akan dibersihkan dari server.",
+      confirmLabel: "Ya, Bersihkan Log",
+      variant: "danger",
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        setIsClearingViolations(true);
+        try {
+          await fetch("/api/violations", { method: "DELETE" });
+          setLiveViolations([]);
+          if (onBulkUpdateStudents) {
+            const updates = students
+              .filter((s) => (s.violationsLog?.length || 0) > 0)
+              .map((s) => ({
+                id: s.id,
+                violationsCount: 0,
+                violationsLog: [],
+              }));
+            if (updates.length > 0) {
+              await onBulkUpdateStudents(updates);
+            }
+          }
+          setStudentSuccessToast("Seluruh log pelanggaran keamanan telah dibersihkan.");
+          setTimeout(() => setStudentSuccessToast(null), 3000);
+        } catch (err) {
+          console.error("Failed to clear violations:", err);
+        } finally {
+          setIsClearingViolations(false);
         }
-      }
-      setStudentSuccessToast("Seluruh log pelanggaran keamanan telah dibersihkan.");
-      setTimeout(() => setStudentSuccessToast(null), 3000);
-    } catch (err) {
-      console.error("Failed to clear violations:", err);
-    } finally {
-      setIsClearingViolations(false);
-    }
+      },
+    });
   };
 
   // Export violations to Excel/CSV
@@ -3975,6 +4052,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
+            {/* Question Bulk Management & Selection Bar */}
+            {filteredBankQuestions.length > 0 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md">
+                <div className="flex items-center space-x-3">
+                  <button
+                    type="button"
+                    onClick={handleSelectAllQuestions}
+                    className="flex items-center space-x-2 text-xs font-bold text-slate-300 hover:text-white transition cursor-pointer select-none"
+                    title="Pilih atau batalkan semua soal pada tampilan berkas & jenjang ini"
+                  >
+                    {selectedQuestionIds.length === filteredBankQuestions.length &&
+                    filteredBankQuestions.length > 0 ? (
+                      <CheckSquare className="w-5 h-5 text-blue-400" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-500 hover:text-slate-300" />
+                    )}
+                    <span>
+                      {selectedQuestionIds.length === filteredBankQuestions.length
+                        ? "Batalkan Pilihan Semua"
+                        : `Pilih Semua (${filteredBankQuestions.length} Butir Soal)`}
+                    </span>
+                  </button>
+
+                  {selectedQuestionIds.length > 0 && (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                      {selectedQuestionIds.length} Terpilih
+                    </span>
+                  )}
+                </div>
+
+                {selectedQuestionIds.length > 0 ? (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQuestionIds([])}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+                    >
+                      Batal Pilih
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleBulkDeleteQuestions}
+                      className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md shadow-rose-600/25 flex items-center space-x-1.5 cursor-pointer animate-in fade-in"
+                      title="Hapus massal butir soal yang dicentang"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Hapus Massal ({selectedQuestionIds.length} Soal)</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-400 hidden sm:block">
+                    Centang butir soal di bawah untuk menghapus beberapa soal sekaligus secara massal.
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Questions List */}
             <div className="space-y-4">
               {filteredBankQuestions.length === 0 ? (
@@ -4020,6 +4154,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               ) : (
                 filteredBankQuestions.map((q, idx) => {
+                  const isSelected = selectedQuestionIds.includes(q.id);
                   const typeLabel =
                     q.type === "mcq"
                       ? "Pilihan Ganda"
@@ -4051,10 +4186,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   return (
                     <div
                       key={q.id}
-                      className="bg-slate-950 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3"
+                      className={`border rounded-2xl p-4 sm:p-5 shadow-sm space-y-3 transition-all ${
+                        isSelected
+                          ? "bg-slate-900 border-blue-500/80 ring-2 ring-blue-500/30 shadow-lg shadow-blue-950/30"
+                          : "bg-slate-950 border-slate-800 hover:border-slate-700"
+                      }`}
                     >
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          {/* Selection Checkbox */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSelectQuestion(q.id)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+                            title={isSelected ? "Batalkan centang soal ini" : "Centang soal ini untuk aksi massal"}
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-5 h-5 text-blue-400" />
+                            ) : (
+                              <Square className="w-5 h-5 text-slate-500 hover:text-slate-300" />
+                            )}
+                          </button>
+
                           <span className="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 font-bold text-xs flex items-center justify-center">
                             {idx + 1}
                           </span>
@@ -4151,11 +4304,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         {/* Delete Question Button */}
                         <button
                           type="button"
-                          onClick={() => {
-                            if (window.confirm(`Hapus butir soal #${idx + 1}?`)) {
-                              onDeleteQuestion(q.id);
-                            }
-                          }}
+                          onClick={() => handleSingleDeleteQuestion(q, idx)}
                           className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
                           title="Hapus Soal"
                         >
