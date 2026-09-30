@@ -351,8 +351,10 @@ export async function savePlaintextQuestionsToFirestore(
       // Clean up fields to avoid any undefined errors in Firestore
       const questionDoc: Record<string, any> = {
         question: q.question,
-        type: q.type, // Exact requested string: PILIHAN_GANDA, PG_KOMPLEKS, BENAR_SALAH, CAUSE_EFFECT, URAIAN
-        options: q.options || [], // Array of Object [{ label: 'A', text: '...' }]
+        type: internalAppType, // Clean internal type: "mcq" | "multi_choice" | "true_false" | "short_answer" | "essay"
+        rawTypeTag: q.type, // Preserved raw tag string: PILIHAN_GANDA, PG_KOMPLEKS, BENAR_SALAH, CAUSE_EFFECT, URAIAN
+        options: q.optionsRaw && q.optionsRaw.length > 0 ? q.optionsRaw : (q.options || []).map((o) => (typeof o === "string" ? o : o.text || "")),
+        optionsDetailed: q.options || [], // Array of Object [{ label: 'A', text: '...' }]
         answerKey: q.answerKey,
         key: q.answerKey,
         point: q.point,

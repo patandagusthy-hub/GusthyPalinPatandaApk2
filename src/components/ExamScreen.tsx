@@ -80,9 +80,10 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   // Active question from student's personalized sequence
   const currentQuestion = studentQuestions[currentIndex] || studentQuestions[0] || questions[0];
 
-  // Shuffled options for current question (if MCQ and enabled)
+  // Shuffled options for current question (if MCQ or Multi-Choice and enabled)
   const currentOptions = useMemo(() => {
-    if (!currentQuestion || currentQuestion.type !== "mcq") return [];
+    if (!currentQuestion) return [];
+    if (currentQuestion.type !== "mcq" && currentQuestion.type !== "multi_choice") return [];
     return getStudentQuestionOptions(currentQuestion, student, config);
   }, [currentQuestion, student, config]);
 
@@ -157,10 +158,22 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
         setCurrentIndex((i) => i + 1);
       } else if (e.key === "ArrowLeft" && currentIndex > 0) {
         setCurrentIndex((i) => i - 1);
-      } else if (["1", "2", "3", "4"].includes(e.key) && currentQuestion?.type === "mcq") {
+      } else if (["1", "2", "3", "4", "5"].includes(e.key) && currentQuestion) {
         const optionPos = parseInt(e.key, 10) - 1;
-        if (currentOptions[optionPos]) {
-          onRecordAnswer(currentQuestion.id, currentOptions[optionPos].originalIndex);
+        const opt = currentOptions[optionPos];
+        if (opt) {
+          if (currentQuestion.type === "mcq") {
+            onRecordAnswer(currentQuestion.id, opt.originalIndex);
+          } else if (currentQuestion.type === "multi_choice") {
+            const selectedList: number[] = Array.isArray(answers[currentQuestion.id])
+              ? answers[currentQuestion.id]
+              : [];
+            const isChecked = selectedList.includes(opt.originalIndex);
+            const newList = isChecked
+              ? selectedList.filter((i) => i !== opt.originalIndex)
+              : [...selectedList, opt.originalIndex];
+            onRecordAnswer(currentQuestion.id, newList);
+          }
         }
       }
     };
@@ -511,50 +524,88 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
               )}
 
               {/* 4. Multi-Choice (Pilihan Ganda Kompleks) */}
-              {currentQuestion.type === "multi_choice" && currentOptions.length > 0 && (
+              {currentQuestion.type === "multi_choice" && (
                 <div className="space-y-3">
-                  <div className="rounded-xl bg-purple-950/30 border border-purple-500/20 p-2.5 text-xs text-purple-300">
-                    Petunjuk: Anda dapat memilih lebih dari satu jawaban yang benar (Centang kotak yang sesuai).
+                  <div className="rounded-xl bg-purple-950/40 border border-purple-500/30 p-3 text-xs text-purple-200 flex flex-wrap items-center justify-between gap-2 shadow-inner">
+                    <span className="flex items-center space-x-2">
+                      <CheckSquare className="w-4 h-4 text-purple-400 shrink-0" />
+                      <span>
+                        <strong>Petunjuk:</strong> Pilihan Ganda Kompleks &mdash; Anda dapat memilih lebih dari satu jawaban yang benar (centang kotak opsi).
+                      </span>
+                    </span>
+                    <span className="text-[11px] font-bold text-purple-300 bg-purple-900/60 px-2.5 py-0.5 rounded-lg border border-purple-500/30 shrink-0">
+                      {Array.isArray(answers[currentQuestion.id]) ? answers[currentQuestion.id].length : 0} Pilihan Tercentang
+                    </span>
                   </div>
 
-                  {currentOptions.map((opt, displayIdx) => {
-                    const selectedList: number[] = Array.isArray(answers[currentQuestion.id])
-                      ? answers[currentQuestion.id]
-                      : [];
-                    const isChecked = selectedList.includes(opt.originalIndex);
-                    const letter = String.fromCharCode(65 + displayIdx);
+                  {(() => {
+                    const displayOpts =
+                      currentOptions.length > 0
+                        ? currentOptions
+                        : (currentQuestion.options || []).map((t, idx) => ({
+                            text: typeof t === "string" ? t : (t as any)?.text || String(t || ""),
+                            originalIndex: idx,
+                          }));
+
+                    if (displayOpts.length === 0) {
+                      return (
+                        <div className="p-4 rounded-xl bg-amber-950/30 border border-amber-500/30 text-xs text-amber-300 flex items-center space-x-2">
+                          <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>Pilihan jawaban sedang dimuat atau tidak tersedia pada format butir soal ini.</span>
+                        </div>
+                      );
+                    }
 
                     return (
-                      <button
-                        key={opt.originalIndex}
-                        type="button"
-                        onClick={() => {
-                          const newList = isChecked
-                            ? selectedList.filter((i) => i !== opt.originalIndex)
-                            : [...selectedList, opt.originalIndex];
-                          onRecordAnswer(currentQuestion.id, newList);
-                        }}
-                        className={`w-full text-left p-3.5 rounded-xl border flex items-start space-x-3 transition cursor-pointer ${
-                          isChecked
-                            ? "bg-purple-950/40 border-purple-500 text-white shadow-md"
-                            : "bg-slate-950/70 border-slate-800 text-slate-300 hover:bg-slate-800/60"
-                        }`}
-                      >
-                        <div
-                          className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 border ${
-                            isChecked
-                              ? "bg-purple-600 border-purple-500 text-white"
-                              : "bg-slate-800 border-slate-700 text-slate-400"
-                          }`}
-                        >
-                          {isChecked ? "✓" : letter}
-                        </div>
-                        <div className="text-sm pt-0.5 leading-relaxed">
-                          <MathRenderer text={opt.text} inline={true} />
-                        </div>
-                      </button>
+                      <div className="space-y-2.5">
+                        {displayOpts.map((opt, displayIdx) => {
+                          const selectedList: number[] = Array.isArray(answers[currentQuestion.id])
+                            ? answers[currentQuestion.id]
+                            : [];
+                          const isChecked = selectedList.includes(opt.originalIndex);
+                          const letter = String.fromCharCode(65 + displayIdx);
+
+                          return (
+                            <button
+                              key={opt.originalIndex}
+                              type="button"
+                              onClick={() => {
+                                const newList = isChecked
+                                  ? selectedList.filter((i) => i !== opt.originalIndex)
+                                  : [...selectedList, opt.originalIndex];
+                                onRecordAnswer(currentQuestion.id, newList);
+                              }}
+                              className={`w-full text-left p-3.5 sm:p-4 rounded-xl border flex items-start space-x-3.5 transition cursor-pointer select-none ${
+                                isChecked
+                                  ? "bg-purple-950/50 border-purple-500 text-white shadow-md shadow-purple-950/40 ring-1 ring-purple-500/50"
+                                  : "bg-slate-950/70 border-slate-800 text-slate-300 hover:bg-slate-800/60 hover:border-slate-700"
+                              }`}
+                            >
+                              <div
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shrink-0 mt-0.5 border transition ${
+                                  isChecked
+                                    ? "bg-purple-600 border-purple-400 text-white shadow-sm"
+                                    : "bg-slate-800/90 border-slate-700 text-slate-400"
+                                }`}
+                              >
+                                {isChecked ? "✓" : letter}
+                              </div>
+                              <div className="text-sm pt-0.5 leading-relaxed flex-1">
+                                <MathRenderer text={opt.text} inline={true} />
+                              </div>
+                              <div className="shrink-0 pt-0.5">
+                                {isChecked ? (
+                                  <CheckSquare className="w-4 h-4 text-purple-400" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-slate-600" />
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     );
-                  })}
+                  })()}
                 </div>
               )}
 

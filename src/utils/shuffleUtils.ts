@@ -60,18 +60,19 @@ export function getStudentExamQuestions(
   student: Student,
   config: ExamConfig
 ): Question[] {
-  // 1. If an active package is selected (and not 'all'), filter by active package
-  let pool = questions;
+  // 1. If an active package is selected (and not 'all'), use the questions of that package
+  let questionsPool = questions;
   if (config.activePackageId && config.activePackageId !== "all") {
     const pkgQuestions = questions.filter((q) => q.packageId === config.activePackageId);
     if (pkgQuestions.length > 0) {
-      pool = pkgQuestions;
+      questionsPool = pkgQuestions;
     }
   }
 
-  // 2. Filter questions for student's grade level ('Semua Kelas' or matching grade)
-  const studentFiltered = pool.filter((q) => isQuestionForStudent(q, student?.className));
-  const questionsPool = studentFiltered.length > 0 ? studentFiltered : pool;
+  // If questionsPool is empty (e.g. invalid package), fallback to all available questions
+  if (questionsPool.length === 0) {
+    questionsPool = questions;
+  }
 
   // If explicitly disabled by admin, return original order
   if (config.randomizeQuestions === false) {
@@ -88,6 +89,8 @@ export function getStudentExamQuestions(
 
 /**
  * Returns options for a question:
+ * Works seamlessly for both MCQ (Single Choice) and Multi-Choice (PG Kompleks).
+ * Safely handles string options, object options ({ label, text }), or legacy arrays.
  * If config.randomizeOptions is true (or undefined, defaulting to true),
  * options are deterministically shuffled with their originalIndex preserved for accurate grading.
  */
@@ -96,14 +99,38 @@ export function getStudentQuestionOptions(
   student: Student,
   config: ExamConfig
 ): ShuffledOption[] {
-  if (!question.options || question.options.length === 0) {
+  const rawList: any[] =
+    question.options ||
+    (question as any).optionsRaw ||
+    (question as any).optionsList ||
+    (question as any).pilihan ||
+    (question as any).choices ||
+    [];
+
+  if (!rawList || rawList.length === 0) {
     return [];
   }
 
-  const baseOptions: ShuffledOption[] = question.options.map((text, idx) => ({
-    text,
-    originalIndex: idx,
-  }));
+  const baseOptions: ShuffledOption[] = rawList
+    .map((item: any, idx: number) => {
+      let text = "";
+      if (typeof item === "string") {
+        text = item;
+      } else if (item && typeof item === "object") {
+        text = String(item.text ?? item.label ?? item.value ?? "").trim();
+      } else {
+        text = String(item ?? "").trim();
+      }
+      return {
+        text,
+        originalIndex: idx,
+      };
+    })
+    .filter((opt) => opt.text.length > 0);
+
+  if (baseOptions.length === 0) {
+    return [];
+  }
 
   if (config.randomizeOptions === false) {
     return baseOptions;

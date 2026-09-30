@@ -3,6 +3,7 @@ import {
   Student,
   TeacherOrAdmin,
   Question,
+  QuestionType,
   QuestionPackage,
   QuestionRevision,
   TingkatKelas,
@@ -24,7 +25,104 @@ import {
 
 export function normalizeQuestionsWithPackages(qs: Question[]): Question[] {
   return qs.map((q) => {
-    if (!q.packageId) {
+    // 1. Normalize Type
+    let normalizedType: QuestionType = q.type || "mcq";
+    const rawType = String((q as any).type || (q as any).appType || (q as any).rawTypeTag || "").trim().toLowerCase();
+    if (
+      rawType === "multi_choice" ||
+      rawType === "pg_kompleks" ||
+      rawType === "kompleks" ||
+      rawType === "complex" ||
+      rawType === "multi" ||
+      rawType === "pilihan ganda kompleks" ||
+      rawType === "checkbox"
+    ) {
+      normalizedType = "multi_choice";
+    } else if (
+      rawType === "true_false" ||
+      rawType === "benar_salah" ||
+      rawType === "tf" ||
+      rawType === "bs"
+    ) {
+      normalizedType = "true_false";
+    } else if (
+      rawType === "matching" ||
+      rawType === "menjodohkan" ||
+      rawType === "jodohkan" ||
+      rawType === "pair"
+    ) {
+      normalizedType = "matching";
+    } else if (
+      rawType === "short_answer" ||
+      rawType === "isian" ||
+      rawType === "isian_singkat" ||
+      rawType === "short"
+    ) {
+      normalizedType = "short_answer";
+    } else if (
+      rawType === "essay" ||
+      rawType === "uraian" ||
+      rawType === "esai"
+    ) {
+      normalizedType = "essay";
+    } else if (
+      rawType === "mcq" ||
+      rawType === "pilihan_ganda" ||
+      rawType === "pg" ||
+      rawType === "single"
+    ) {
+      normalizedType = "mcq";
+    }
+
+    // 2. Normalize options to clean string[]
+    let normalizedOptions: string[] = [];
+    const rawOptions =
+      q.options ||
+      (q as any).optionsRaw ||
+      (q as any).optionsList ||
+      (q as any).pilihan ||
+      (q as any).choices;
+
+    if (Array.isArray(rawOptions)) {
+      normalizedOptions = rawOptions
+        .map((opt: any) => {
+          if (typeof opt === "string") return opt.trim();
+          if (opt && typeof opt === "object") {
+            return String(opt.text ?? opt.label ?? opt.value ?? "").trim();
+          }
+          return String(opt || "").trim();
+        })
+        .filter((opt: string) => opt.length > 0);
+    }
+
+    // 3. Normalize correctAnswers for multi_choice
+    let correctAnswers = q.correctAnswers;
+    if (normalizedType === "multi_choice") {
+      if (!Array.isArray(correctAnswers) || correctAnswers.length === 0) {
+        if ((q as any).correctAnswer !== undefined && typeof (q as any).correctAnswer === "number") {
+          correctAnswers = [(q as any).correctAnswer];
+        } else if (typeof (q as any).keyAnswer === "string" || typeof (q as any).answerKey === "string") {
+          const keyStr = String((q as any).keyAnswer || (q as any).answerKey || "");
+          const letters = [...keyStr.matchAll(/\b([A-Ea-e])\b/g)].map((m) =>
+            m[1].toUpperCase().charCodeAt(0) - 65
+          );
+          if (letters.length > 0) {
+            correctAnswers = [...new Set(letters)];
+          } else {
+            correctAnswers = [0];
+          }
+        } else {
+          correctAnswers = [0];
+        }
+      }
+    }
+
+    // 4. Normalize Package metadata
+    let packageId = q.packageId;
+    let packageName = q.packageName;
+    let tingkatKelas = q.tingkatKelas;
+
+    if (!packageId) {
       const text = (q.question || "").toLowerCase();
       if (
         text.includes("electric vehicle") ||
@@ -32,22 +130,28 @@ export function normalizeQuestionsWithPackages(qs: Question[]): Question[] {
         text.includes("according to the passage") ||
         text.includes("xii tka")
       ) {
-        return {
-          ...q,
-          packageId: "pkg-xii-tka",
-          packageName: "XII TKA.docx",
-          tingkatKelas: q.tingkatKelas || "XII",
-        };
+        packageId = "pkg-xii-tka";
+        packageName = "XII TKA.docx";
+        tingkatKelas = tingkatKelas || "XII";
+      } else {
+        packageId = "pkg-default";
+        packageName = "Naskah Soal Utama CBT";
       }
-      return {
-        ...q,
-        packageId: "pkg-default",
-        packageName: "Naskah Soal Utama CBT",
-      };
     }
-    return q;
+
+    return {
+      ...q,
+      type: normalizedType,
+      options: normalizedOptions.length > 0 ? normalizedOptions : q.options,
+      correctAnswers,
+      packageId,
+      packageName,
+      tingkatKelas: tingkatKelas || "Semua Kelas",
+      points: q.points || (normalizedType === "essay" ? 20 : 10),
+    };
   });
 }
+import { getStudentExamQuestions } from "../utils/shuffleUtils";
 import {
   parseStudentScanPayload,
   generateUniqueStudentToken,
@@ -1160,8 +1264,7 @@ export function useExamStore() {
       let essayMax = 0;
       const essayEvaluations: Record<string, any> = {};
 
-      const studentQuestions = questions.filter((q) => isQuestionForStudent(q, currentStudent.className));
-      const activeQuestions = studentQuestions.length > 0 ? studentQuestions : questions;
+      const activeQuestions = getStudentExamQuestions(questions, currentStudent, examConfig);
 
       activeQuestions.forEach((q) => {
         const studentAns = studentAnswers[q.id];
