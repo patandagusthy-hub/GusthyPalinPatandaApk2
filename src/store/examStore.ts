@@ -2074,13 +2074,44 @@ export function useExamStore() {
   );
 
   const deleteQuestion = useCallback(async (id: string) => {
-    setQuestions((prev) => prev.filter((q) => q.id !== id));
+    setQuestions((prev) => {
+      const next = prev.filter((q) => q.id !== id);
+      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(next));
+      return next;
+    });
 
     try {
-      await deleteDoc(doc(db, "questions", id));
+      await Promise.allSettled([
+        deleteDoc(doc(db, "questions", id)),
+        deleteDoc(doc(db, "bank_soal", id)),
+        deleteDoc(doc(db, "exam_questions", id)),
+      ]);
       setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
     } catch (err) {
       console.error("[Firebase] Error deleting question from Firestore:", err);
+    }
+  }, []);
+
+  const bulkDeleteQuestions = useCallback(async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setQuestions((prev) => {
+      const next = prev.filter((q) => !idSet.has(q.id));
+      safeStorage.setItem("GPP_EXAM_QUESTIONS_V1", JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      const ops: { type: "delete"; ref: any }[] = [];
+      ids.forEach((id) => {
+        ops.push({ type: "delete" as const, ref: doc(db, "questions", id) });
+        ops.push({ type: "delete" as const, ref: doc(db, "bank_soal", id) });
+        ops.push({ type: "delete" as const, ref: doc(db, "exam_questions", id) });
+      });
+      await commitBatchOperations(ops);
+      setLastSyncTime(new Date().toLocaleTimeString("id-ID"));
+    } catch (err) {
+      console.error("[Firebase] Error bulk deleting questions from Firestore:", err);
     }
   }, []);
 
@@ -2703,6 +2734,7 @@ export function useExamStore() {
     addQuestion,
     bulkAddQuestions,
     deleteQuestion,
+    bulkDeleteQuestions,
     updateQuestion,
     restoreQuestionRevision,
     questionPackages,
